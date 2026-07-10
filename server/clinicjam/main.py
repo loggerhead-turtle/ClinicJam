@@ -45,6 +45,7 @@ player = Player(jam, spotify, cast, state)
 hub = Hub()
 
 admin_sessions: set[str] = set()
+guest_sessions: set[str] = set()
 
 # Hostnames/paths phones probe to decide whether a captive portal exists.
 PORTAL_PROBE_PATHS = {
@@ -124,6 +125,58 @@ async def rfc8910():
     )
 
 
+# ---------------------------------------------------------------- sessions
+#
+# Two tiers:
+#   guest  — the shared jam PIN; may search, queue, and vote. Nothing else.
+#   admin  — the host PIN; everything, including settings. An admin session
+#            also counts as a guest session.
+
+def _is_admin(request: Request) -> bool:
+    return request.cookies.get("clinicjam_admin", "") in admin_sessions
+
+
+def _is_guest(request: Request) -> bool:
+    if not config.guest_pin:  # gate disabled by config
+        return True
+    return (
+        request.cookies.get("clinicjam_guest", "") in guest_sessions
+        or _is_admin(request)
+    )
+
+
+def require_guest(request: Request) -> None:
+    if not _is_guest(request):
+        raise HTTPException(401, "Enter the jam PIN to join")
+
+
+class GuestLoginBody(BaseModel):
+    pin: str
+
+
+@app.post("/api/login")
+async def guest_login(body: GuestLoginBody, response: Response):
+    # The admin PIN is accepted here too, so the host never has to juggle.
+    valid = (
+        config.guest_pin and secrets.compare_digest(body.pin, config.guest_pin)
+    ) or secrets.compare_digest(body.pin, config.admin_pin)
+    if not (valid or not config.guest_pin):
+        raise HTTPException(401, "Wrong PIN")
+    token = secrets.token_urlsafe(24)
+    guest_sessions.add(token)
+    response.set_cookie("clinicjam_guest", token, httponly=True, max_age=86400 * 30)
+    return {"ok": True}
+
+
+@app.get("/api/session")
+async def session_info(request: Request):
+    return {
+        "guest_pin_required": bool(config.guest_pin),
+        "guest": _is_guest(request),
+        "admin": _is_admin(request),
+    }
+
+
 # ---------------------------------------------------------------- guest API
 
 def _device(request: Request) -> tuple[str, str]:
@@ -140,7 +193,7 @@ async def api_state(request: Request):
     return jam.public_state(device_id)
 
 
-@app.get("/api/search")
+@app.get("/api/search", dependencies=[Depends(require_guest)])
 async def api_search(q: str, request: Request):
     _device(request)
     q = q.strip()
@@ -159,7 +212,7 @@ class AddBody(BaseModel):
     uri: str
 
 
-@app.post("/api/queue")
+@app.post("/api/queue", dependencies=[Depends(require_guest)])
 async def api_add(body: AddBody, request: Request):
     device_id, name = _device(request)
     if not device_id:
@@ -182,7 +235,7 @@ class VoteBody(BaseModel):
     up: bool = True
 
 
-@app.post("/api/queue/{item_id}/vote")
+@app.post("/api/queue/{item_id}/vote", dependencies=[Depends(require_guest)])
 async def api_vote(item_id: str, body: VoteBody, request: Request):
     device_id, _ = _device(request)
     if not device_id:
@@ -195,7 +248,7 @@ async def api_vote(item_id: str, body: VoteBody, request: Request):
     return jam.public_state(device_id)
 
 
-@app.post("/api/skip-vote")
+@app.post("/api/skip-vote", dependencies=[Depends(require_guest)])
 async def api_skip_vote(request: Request):
     device_id, _ = _device(request)
     if not device_id:

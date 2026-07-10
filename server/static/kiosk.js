@@ -33,6 +33,10 @@
 
   async function api(path, opts = {}) {
     const resp = await fetch(path, { ...opts, headers: headers() });
+    if (resp.status === 401) {
+      openPinPad("guest");
+      throw new Error("Enter the jam PIN to join");
+    }
     if (!resp.ok) {
       let msg = "Something went wrong";
       try { msg = (await resp.json()).detail || msg; } catch {}
@@ -226,9 +230,24 @@
     } catch (e) { toast(e.message); }
   });
 
-  // ---------------- host controls (PIN unlock) ----------------
+  // ---------------- PIN pad (guest unlock + host unlock) ----------------
+  // "guest" mode gates the whole kiosk behind the shared jam PIN;
+  // "admin" mode reveals host playback controls + the full admin panel.
   let hostUnlocked = false;
   let pin = "";
+  let pinMode = "admin";
+
+  function openPinPad(mode) {
+    const dlg = $("#k-pin");
+    pinMode = mode;
+    pin = "";
+    $("#k-pin-display").textContent = "";
+    $("#k-pin-title").textContent = mode === "guest" ? "Join the jam" : "Host PIN";
+    $("#k-pin-hint").classList.toggle("hidden", mode !== "guest");
+    // Guests must get past the pad; only the host pad is dismissable.
+    $("#k-pin-cancel").classList.toggle("hidden", mode === "guest");
+    if (!dlg.open) dlg.showModal();
+  }
 
   function buildPinPad() {
     const pad = $("#k-pin-pad");
@@ -247,17 +266,22 @@
   }
 
   async function tryUnlock() {
+    const endpoint = pinMode === "guest" ? "/api/login" : "/api/admin/login";
     try {
-      const resp = await fetch("/api/admin/login", {
+      const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin }),
       });
       if (!resp.ok) throw new Error("Wrong PIN");
-      hostUnlocked = true;
-      $("#k-host-controls").classList.remove("hidden");
       $("#k-pin").close();
-      toast("Host controls unlocked");
+      if (pinMode === "guest") {
+        toast("Jam unlocked 🎵");
+      } else {
+        hostUnlocked = true;
+        $("#k-host-controls").classList.remove("hidden");
+        toast("Host controls unlocked");
+      }
     } catch (e) {
       toast(e.message);
     } finally {
@@ -272,11 +296,10 @@
       $("#k-host-controls").classList.toggle("hidden");
       return;
     }
-    pin = "";
-    $("#k-pin-display").textContent = "";
-    $("#k-pin").showModal();
+    openPinPad("admin");
   };
   $("#k-pin-cancel").onclick = () => $("#k-pin").close();
+  $("#k-admin").onclick = () => { location.href = "/admin"; };
   buildPinPad();
 
   const hostApi = (path) => () =>
@@ -305,6 +328,10 @@
   }
 
   async function boot() {
+    try {
+      const session = await api("/api/session");
+      if (session.guest_pin_required && !session.guest) openPinPad("guest");
+    } catch {}
     try { state = await api("/api/state"); render(); } catch {}
     connectWS();
   }

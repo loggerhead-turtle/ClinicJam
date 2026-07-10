@@ -34,8 +34,13 @@ macs = [
 [server]
 # The web app listens here; the firewall redirects guest port-80 traffic to it.
 port = 8080
-# PIN for the admin panel at /admin. CHANGE THIS.
+# PIN for the admin panel at /admin — full control: settings, speakers,
+# moderation, bans. CHANGE THIS.
 admin_pin = "2468"
+# PIN guests must enter before they can search, queue, or vote. Share it
+# with the team / post it on the wall. Guests with this PIN can NOT change
+# any settings. Leave empty ("") to let anyone on the Wi-Fi join the jam.
+guest_pin = "1357"
 
 [spotify]
 # Create an app at https://developer.spotify.com/dashboard and paste its

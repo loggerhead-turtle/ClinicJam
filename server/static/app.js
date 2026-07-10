@@ -33,6 +33,11 @@
 
   async function api(path, opts = {}) {
     const resp = await fetch(path, { ...opts, headers: headers() });
+    if (resp.status === 401) {
+      // Session missing or expired — bring the join dialog back.
+      showJoinDialog(true);
+      throw new Error("Enter the jam PIN to join");
+    }
     if (!resp.ok) {
       let msg = "Something went wrong";
       try { msg = (await resp.json()).detail || msg; } catch {}
@@ -41,15 +46,44 @@
     return resp.json();
   }
 
-  // ---------- name prompt ----------
-  if (!deviceName) {
-    const dlg = $("#name-dialog");
+  // ---------- join dialog (name + jam PIN) ----------
+  let pinRequired = false;
+
+  function showJoinDialog(needPin) {
+    const dlg = $("#join-dialog");
+    if (dlg.open) return;
+    $("#name-input").value = deviceName;
+    $("#name-input").classList.toggle("hidden", !!deviceName && needPin);
+    $("#pin-input").classList.toggle("hidden", !needPin);
+    $("#join-error").classList.add("hidden");
+    $("#join-hint").textContent = needPin
+      ? "Enter the jam PIN — it's posted at the front desk."
+      : "What should we call you when your songs play?";
     dlg.showModal();
-    dlg.addEventListener("close", () => {
-      deviceName = ($("#name-input").value || "").trim().slice(0, 24) || "guest";
-      localStorage.setItem("cj_name", deviceName);
-    });
   }
+
+  $("#join-dialog").addEventListener("close", async () => {
+    deviceName =
+      ($("#name-input").value || "").trim().slice(0, 24) || deviceName || "guest";
+    localStorage.setItem("cj_name", deviceName);
+    const needPin = !$("#pin-input").classList.contains("hidden");
+    if (!needPin) return;
+    try {
+      const resp = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: $("#pin-input").value.trim() }),
+      });
+      if (!resp.ok) throw new Error("Wrong PIN — try again");
+      $("#pin-input").value = "";
+      toast("You're in! 🎵");
+    } catch (e) {
+      $("#pin-input").value = "";
+      showJoinDialog(true);
+      $("#join-error").textContent = e.message;
+      $("#join-error").classList.remove("hidden");
+    }
+  });
 
   // ---------- rendering ----------
   let state = null;
@@ -196,6 +230,13 @@
   }
 
   async function boot() {
+    try {
+      const session = await api("/api/session");
+      pinRequired = session.guest_pin_required;
+      if (!deviceName || (pinRequired && !session.guest)) {
+        showJoinDialog(pinRequired && !session.guest);
+      }
+    } catch {}
     try { state = await api("/api/state"); render(); } catch {}
     connectWS();
   }

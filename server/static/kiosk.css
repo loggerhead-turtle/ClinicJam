@@ -34,8 +34,10 @@ body.kiosk {
 
 .k-big { padding: 14px; font-size: 1rem; }
 
+.k-host-wrap { display: flex; flex-direction: column; gap: 8px; }
 .k-host { display: flex; gap: 8px; }
 .k-host button { flex: 1; padding: 14px 6px; font-size: 1.05rem; }
+#k-admin { padding: 10px; font-size: .9rem; }
 
 .k-foot {
   margin-top: auto; display: flex; justify-content: space-between; align-items: center;

@@ -29,6 +29,7 @@ class Config:
     ssid: str = "ClinicJam"
     server_port: int = 8080
     admin_pin: str = "2468"
+    guest_pin: str = ""
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = "http://127.0.0.1:8888/callback"
@@ -57,6 +58,7 @@ class Config:
             ssid=get("network", "ssid", "ClinicJam"),
             server_port=int(get("server", "port", 8080)),
             admin_pin=str(get("server", "admin_pin", "2468")),
+            guest_pin=str(get("server", "guest_pin", "")),
             spotify_client_id=get("spotify", "client_id", ""),
             spotify_client_secret=get("spotify", "client_secret", ""),
             spotify_redirect_uri=get(

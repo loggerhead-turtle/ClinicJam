@@ -29,11 +29,14 @@
 
     <button id="k-skipvote" class="k-big ghost">⏭ Vote to skip <span id="k-skipcount"></span></button>
 
-    <div id="k-host-controls" class="k-host hidden">
-      <button id="k-pause">⏸</button>
-      <button id="k-resume">▶</button>
-      <button id="k-skip">⏭ Skip</button>
-      <button id="k-stop" class="danger">⏹ Stop</button>
+    <div id="k-host-controls" class="k-host-wrap hidden">
+      <div class="k-host">
+        <button id="k-pause">⏸</button>
+        <button id="k-resume">▶</button>
+        <button id="k-skip">⏭ Skip</button>
+        <button id="k-stop" class="danger">⏹ Stop</button>
+      </div>
+      <button id="k-admin" class="ghost">⚙ Full admin panel</button>
     </div>
 
     <div class="k-foot">
@@ -63,9 +66,10 @@
   </section>
 </div>
 
-<!-- PIN pad for host unlock -->
+<!-- PIN pad: unlocks the jam (guest PIN) or host controls (admin PIN) -->
 <dialog id="k-pin">
-  <h2>Host PIN</h2>
+  <h2 id="k-pin-title">Host PIN</h2>
+  <p id="k-pin-hint" class="muted hidden">Enter the jam PIN to search and vote.</p>
   <div class="k-pin-display" id="k-pin-display"></div>
   <div class="k-pin-pad" id="k-pin-pad"></div>
   <button id="k-pin-cancel" class="ghost">Cancel</button>

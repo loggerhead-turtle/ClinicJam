@@ -53,6 +53,9 @@ the group keeps them in sync automatically.
 
 - 📱 **Guest app** (captive portal): search, add to queue, upvote, vote-skip,
   live now-playing with album art — updates pushed over WebSocket.
+- 🔐 **Two-tier PINs**: a shared **jam PIN** (post it at the front desk)
+  lets people search, queue, and vote — nothing else. The **admin PIN**
+  unlocks the full host panel: settings, speakers, moderation, bans.
 - 🗳️ **Queue modes**: most-votes-first or strict first-come-first-served.
 - ⏭️ **Vote to skip** with a configurable listener threshold.
 - 🎛️ **Host panel** (`/admin`, PIN-protected): start/stop the jam,

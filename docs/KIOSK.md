@@ -26,9 +26,18 @@ No desktop environment is installed — this works on Raspberry Pi OS
 - **Right**: the live queue with upvote buttons, and a search bar that
   opens a built-in on-screen keyboard (no OS keyboard integration to
   babysit — it's part of the page).
-- **Gear icon** (bottom-left): host controls. Entering the admin PIN on
-  the on-screen PIN pad reveals pause / resume / skip / stop-jam buttons.
-  Tap the gear again to hide them when you walk away.
+- **Gear icon** (bottom-left): host controls. Entering the **admin PIN**
+  on the on-screen PIN pad reveals pause / resume / skip / stop-jam
+  buttons plus a **Full admin panel** button that opens `/admin` right on
+  the touchscreen (settings, speakers, moderation, bans). Tap the gear
+  again to hide the controls when you walk away.
+
+If a **jam PIN** is configured (`guest_pin` in config.toml), the kiosk
+boots locked: a PIN pad covers the screen until someone enters the shared
+jam PIN (or the admin PIN). Once unlocked it stays unlocked — it's a
+shared screen in a trusted space; re-lock it any time by restarting the
+kiosk service. Guests at the kiosk can search, queue, and vote, but
+settings always require the admin PIN.
 
 The kiosk counts as **one voter** — it shares a single device identity,
 same as one phone, so a passerby can't multi-vote by hammering the screen.

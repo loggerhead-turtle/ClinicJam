@@ -50,11 +50,14 @@
 
 <div id="toast"></div>
 
-<dialog id="name-dialog">
+<dialog id="join-dialog">
   <form method="dialog">
     <h2>Join the jam</h2>
-    <p>What should we call you when your songs play?</p>
+    <p id="join-hint">What should we call you when your songs play?</p>
     <input id="name-input" maxlength="24" placeholder="Your name" autocomplete="name">
+    <input id="pin-input" class="hidden" inputmode="numeric" autocomplete="off"
+           placeholder="Jam PIN (ask the front desk)">
+    <p id="join-error" class="muted hidden" style="color:var(--danger)"></p>
     <button value="ok" class="primary">Let's go</button>
   </form>
 </dialog>

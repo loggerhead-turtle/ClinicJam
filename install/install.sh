@@ -78,10 +78,12 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     if [ -t 0 ]; then
         read -rp "Wi-Fi network name for guests [ClinicJam]: " SSID
         read -rp "Admin PIN for the host panel [2468]: " PIN
+        read -rp "Jam PIN guests enter to join (empty = no PIN) [1357]: " GUESTPIN
         read -rp "Two-letter Wi-Fi country code [US]: " COUNTRY
-        SSID=${SSID:-ClinicJam}; PIN=${PIN:-2468}; COUNTRY=${COUNTRY:-US}
+        SSID=${SSID:-ClinicJam}; PIN=${PIN:-2468}; GUESTPIN=${GUESTPIN-1357}; COUNTRY=${COUNTRY:-US}
         sed -i "s/^ssid = .*/ssid = \"${SSID//\//\\/}\"/" "$CONFIG_DIR/config.toml"
         sed -i "s/^admin_pin = .*/admin_pin = \"${PIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
+        sed -i "s/^guest_pin = .*/guest_pin = \"${GUESTPIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
         sed -i "s/^country = .*/country = \"${COUNTRY//\//\\/}\"/" "$CONFIG_DIR/config.toml"
     else
         warn "Non-interactive install: edit $CONFIG_DIR/config.toml afterwards (SSID, admin PIN, Spotify keys)."
