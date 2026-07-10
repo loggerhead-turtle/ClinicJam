@@ -1,0 +1,12 @@
+[Unit]
+Description=ClinicJam AP interface setup (static IP on the jam Wi-Fi)
+Before=clinicjam-hostapd.service clinicjam-dnsmasq.service
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/clinicjam/bin/setup-ap-interface.sh
+
+[Install]
+WantedBy=multi-user.target

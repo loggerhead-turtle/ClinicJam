@@ -1,0 +1,59 @@
+# ClinicJam configuration.
+# The installer copies this to /etc/clinicjam/config.toml — edit it there.
+
+[network]
+# Wireless interface that hosts the private Jam network (the Pi 4's built-in radio).
+ap_interface = "wlan0"
+# The Pi's address on the Jam network. Guests and Nest speakers get DHCP leases here.
+ap_ip = "10.24.7.1"
+dhcp_range_start = "10.24.7.50"
+dhcp_range_end = "10.24.7.250"
+ssid = "ClinicJam"
+# Two-letter regulatory domain for the radio.
+country = "US"
+channel = 6
+# Leave empty for an open network (typical for captive portals).
+# Set 8+ characters to require a WPA2 password instead.
+wpa2_passphrase = ""
+
+[uplink]
+# Interfaces tried (in order) for the Pi's own internet — the USB cellular
+# modem usually shows up as usb0 or wwan0. Ethernet and a USB Wi-Fi dongle
+# are supported as fallbacks. Guests are NEVER forwarded to these.
+interfaces = ["usb0", "wwan0", "eth0", "wlan1"]
+
+[internet_allowlist]
+# MAC addresses permitted to reach the internet through the uplink.
+# Add your 5 Google Nest speakers here: they need a trickle of internet for
+# Google's check-in/time sync (the music itself is streamed locally by the Pi).
+# Find the MACs in the Google Home app: speaker -> Settings -> Device information.
+macs = [
+  # "aa:bb:cc:dd:ee:01",
+]
+
+[server]
+# The web app listens here; the firewall redirects guest port-80 traffic to it.
+port = 8080
+# PIN for the admin panel at /admin. CHANGE THIS.
+admin_pin = "2468"
+
+[spotify]
+# Create an app at https://developer.spotify.com/dashboard and paste its
+# credentials here. See docs/SPOTIFY_SETUP.md for the 5-minute walkthrough.
+client_id = ""
+client_secret = ""
+# Loopback redirect — Spotify permits plain HTTP only for 127.0.0.1.
+# The admin panel walks you through the copy-paste authorization flow.
+redirect_uri = "http://127.0.0.1:8888/callback"
+# Name the Pi announces as a Spotify Connect device.
+device_name = "ClinicJam"
+
+[audio]
+# MP3 bitrate for the local stream fanned out to the Nest speakers.
+stream_bitrate = "320k"
+# Raw PCM pipe written by librespot and read by the streamer service.
+fifo_path = "/run/clinicjam/audio.fifo"
+
+[paths]
+# Runtime state (Spotify tokens, admin-tunable settings, bans) lives here.
+state_file = "/var/lib/clinicjam/state.json"

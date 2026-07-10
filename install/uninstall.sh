@@ -1,0 +1,25 @@
+#!/bin/bash
+# Remove ClinicJam services and network config. Keeps /etc/clinicjam and
+# /var/lib/clinicjam unless --purge is given.
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "Run with sudo"; exit 1; }
+
+systemctl disable --now \
+    clinicjam-web clinicjam-librespot clinicjam-hostapd \
+    clinicjam-dnsmasq clinicjam-firewall clinicjam-network 2>/dev/null || true
+rm -f /etc/systemd/system/clinicjam-*.service /etc/tmpfiles.d/clinicjam.conf
+systemctl daemon-reload
+
+nft delete table inet clinicjam 2>/dev/null || true
+nft delete table ip clinicjam_nat 2>/dev/null || true
+rm -f /etc/NetworkManager/conf.d/clinicjam-unmanaged.conf \
+      /etc/sysctl.d/90-clinicjam.conf /usr/local/sbin/clinicjam-apply
+systemctl reload NetworkManager 2>/dev/null || true
+
+if [ "${1:-}" = "--purge" ]; then
+    rm -rf /opt/clinicjam /etc/clinicjam /var/lib/clinicjam
+    userdel clinicjam 2>/dev/null || true
+    echo "ClinicJam fully removed."
+else
+    echo "Services removed. Config kept in /etc/clinicjam (use --purge to delete everything)."
+fi

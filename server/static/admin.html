@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClinicJam — Host</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🎛️ <b>ClinicJam</b> host</div>
+  <a href="/" style="color:var(--muted);font-size:.85rem;text-decoration:none">guest view →</a>
+</header>
+
+<main>
+  <section id="login" class="card">
+    <h2>Host login</h2>
+    <div class="row" style="margin-top:10px">
+      <input id="pin" type="password" inputmode="numeric" placeholder="PIN" class="grow">
+      <button id="login-btn" class="primary">Unlock</button>
+    </div>
+  </section>
+
+  <div id="panel" class="hidden admin-grid">
+
+    <section class="card admin-grid">
+      <h2>Status</h2>
+      <div class="status-line">Spotify account: <b id="st-spotify"></b></div>
+      <div class="status-line">Spotify Connect device: <b id="st-librespot"></b></div>
+      <div class="status-line">Speakers: <b id="st-cast"></b></div>
+      <div class="status-line hidden" id="st-error-row">Player: <b class="bad" id="st-error"></b></div>
+      <div class="row">
+        <button id="jam-toggle" class="primary">Start the jam</button>
+        <button id="pb-pause">⏸ Pause</button>
+        <button id="pb-resume">▶ Resume</button>
+        <button id="pb-skip">⏭ Skip</button>
+      </div>
+    </section>
+
+    <section class="card admin-grid" id="spotify-connect">
+      <h2>Connect Spotify</h2>
+      <p class="muted">1. Tap the button and log in with the office Spotify Premium account.
+      2. Your browser will land on a broken 127.0.0.1 page — that's expected.
+      3. Copy that page's full address and paste it below.</p>
+      <div class="row">
+        <button id="spotify-auth">Open Spotify login</button>
+      </div>
+      <div class="row">
+        <input id="spotify-paste" type="text" class="grow" placeholder="Paste the http://127.0.0.1:8888/callback?code=... URL">
+        <button id="spotify-finish" class="primary">Finish</button>
+      </div>
+    </section>
+
+    <section class="card admin-grid">
+      <h2>Speakers</h2>
+      <p class="muted">Pick the speaker group with all five Nests (create it once in the
+      Google Home app) — or a single speaker for testing.</p>
+      <div class="row">
+        <select id="cast-select" class="grow"></select>
+        <button id="cast-refresh">↻</button>
+      </div>
+      <div class="row">
+        <span class="muted">Volume</span>
+        <input id="volume" type="range" min="0" max="100" value="35">
+        <span class="muted" id="volume-val">35%</span>
+      </div>
+    </section>
+
+    <section class="card admin-grid">
+      <h2>Jam rules</h2>
+      <div class="row">
+        <span class="muted grow">Queue order</span>
+        <select id="set-mode">
+          <option value="vote">Most votes first</option>
+          <option value="fifo">First come, first served</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="muted grow">Block explicit tracks</span>
+        <select id="set-explicit">
+          <option value="true">On</option>
+          <option value="false">Off</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="muted grow">Skip when this share of listeners votes</span>
+        <select id="set-skip">
+          <option value="0.34">1/3</option>
+          <option value="0.5">1/2</option>
+          <option value="0.67">2/3</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="muted grow">Max pending songs per person (0 = unlimited)</span>
+        <input id="set-limit" type="number" min="0" max="10" style="width:80px">
+      </div>
+      <div class="row">
+        <input id="set-fallback" type="text" class="grow"
+               placeholder="Fallback Spotify playlist link (plays when queue is empty)">
+      </div>
+      <div class="row"><button id="set-save" class="primary">Save rules</button></div>
+    </section>
+
+    <section class="card admin-grid">
+      <h2>Queue moderation</h2>
+      <ul id="adm-queue" class="tracklist"></ul>
+      <p class="muted" id="adm-queue-empty">Queue is empty.</p>
+    </section>
+
+    <section class="card admin-grid">
+      <h2>Guests</h2>
+      <ul id="adm-devices" class="tracklist"></ul>
+      <h2 style="margin-top:8px">Blocked</h2>
+      <ul id="adm-banned" class="tracklist"></ul>
+    </section>
+
+  </div>
+</main>
+
+<div id="toast"></div>
+<script src="/static/admin.js"></script>
+</body>
+</html>

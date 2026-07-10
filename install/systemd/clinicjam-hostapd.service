@@ -1,0 +1,12 @@
+[Unit]
+Description=ClinicJam Wi-Fi access point (hostapd)
+After=clinicjam-network.service
+Requires=clinicjam-network.service
+
+[Service]
+ExecStart=/usr/sbin/hostapd /etc/clinicjam/hostapd.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

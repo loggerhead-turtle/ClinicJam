@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ClinicJam</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">🎵 <b>ClinicJam</b></div>
+  <div class="listeners" id="listeners"></div>
+</header>
+
+<main>
+  <section id="offline" class="card hidden">
+    <p>The jam hasn't started yet. Ask the host to fire it up! 🎧</p>
+  </section>
+
+  <section id="now" class="card hidden">
+    <div class="now-row">
+      <img id="now-art" alt="" src="">
+      <div class="now-meta">
+        <div class="label">Now playing</div>
+        <div class="title" id="now-title"></div>
+        <div class="artist" id="now-artist"></div>
+        <div class="byline" id="now-by"></div>
+      </div>
+    </div>
+    <div class="progress"><div id="progress-bar"></div></div>
+    <button id="skipvote" class="ghost">⏭ Vote to skip <span id="skip-count"></span></button>
+  </section>
+
+  <section class="card">
+    <div class="searchbox">
+      <input id="search" type="search" placeholder="Search for a song to add…"
+             autocomplete="off" autocapitalize="off">
+    </div>
+    <ul id="results" class="tracklist"></ul>
+  </section>
+
+  <section class="card">
+    <div class="section-head">
+      <h2>Up next</h2><span class="mode-pill" id="mode-pill"></span>
+    </div>
+    <ul id="queue" class="tracklist"></ul>
+    <p id="queue-empty" class="muted">Queue is empty — add the first song!</p>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<dialog id="name-dialog">
+  <form method="dialog">
+    <h2>Join the jam</h2>
+    <p>What should we call you when your songs play?</p>
+    <input id="name-input" maxlength="24" placeholder="Your name" autocomplete="name">
+    <button value="ok" class="primary">Let's go</button>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
