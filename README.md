@@ -60,6 +60,10 @@ the group keeps them in sync automatically.
 - 🚫 **Explicit filter** — keep it waiting-room safe.
 - 📻 **Fallback playlist** — when the guest queue is empty, an office
   playlist keeps the music going.
+- 🖥️ **Optional touchscreen kiosk** — attach a touch display to the Pi
+  and it boots straight into a big-button jam UI with an on-screen
+  keyboard, so nobody even needs their phone
+  ([docs/KIOSK.md](docs/KIOSK.md)).
 
 ## Quick start
 
@@ -80,6 +84,10 @@ the group keeps them in sync automatically.
    allowlist their MACs → [docs/NEST_SETUP.md](docs/NEST_SETUP.md)
 
 5. Press **Start the jam**. 🎉
+
+6. *(Optional)* Attach a touchscreen and run
+   `sudo /opt/clinicjam/install/setup-kiosk.sh` for the walk-up kiosk
+   → [docs/KIOSK.md](docs/KIOSK.md)
 
 ## Repository layout
 

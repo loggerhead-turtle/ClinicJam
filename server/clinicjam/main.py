@@ -430,6 +430,11 @@ async def admin_page():
     return FileResponse(STATIC_DIR / "admin.html")
 
 
+@app.get("/kiosk")
+async def kiosk_page():
+    return FileResponse(STATIC_DIR / "kiosk.html")
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

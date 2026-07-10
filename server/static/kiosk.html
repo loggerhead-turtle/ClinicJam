@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>ClinicJam Kiosk</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/kiosk.css">
+</head>
+<body class="kiosk">
+
+<div class="k-layout">
+
+  <!-- left: now playing + controls -->
+  <aside class="k-left">
+    <div class="k-brand">🎵 ClinicJam</div>
+
+    <div id="k-idle" class="k-idle hidden">
+      <p>The jam hasn't started yet.</p>
+    </div>
+
+    <div id="k-now" class="k-now hidden">
+      <img id="k-art" alt="" src="">
+      <div class="k-title" id="k-title"></div>
+      <div class="k-artist" id="k-artist"></div>
+      <div class="k-by" id="k-by"></div>
+      <div class="progress"><div id="k-progress"></div></div>
+    </div>
+
+    <button id="k-skipvote" class="k-big ghost">⏭ Vote to skip <span id="k-skipcount"></span></button>
+
+    <div id="k-host-controls" class="k-host hidden">
+      <button id="k-pause">⏸</button>
+      <button id="k-resume">▶</button>
+      <button id="k-skip">⏭ Skip</button>
+      <button id="k-stop" class="danger">⏹ Stop</button>
+    </div>
+
+    <div class="k-foot">
+      <span id="k-listeners" class="muted"></span>
+      <button id="k-lock" class="k-gear" title="Host controls">⚙</button>
+    </div>
+  </aside>
+
+  <!-- right: search + queue -->
+  <section class="k-right">
+    <div class="k-searchrow">
+      <input id="k-search" type="text" readonly placeholder="Tap to search for a song…">
+      <button id="k-clear" class="hidden">✕</button>
+    </div>
+
+    <div id="k-panels">
+      <ul id="k-results" class="tracklist k-list hidden"></ul>
+      <div id="k-queue-panel">
+        <div class="section-head"><h2>Up next</h2><span class="mode-pill" id="k-mode"></span></div>
+        <ul id="k-queue" class="tracklist k-list"></ul>
+        <p id="k-empty" class="muted">Queue is empty — add the first song!</p>
+      </div>
+    </div>
+
+    <!-- on-screen keyboard -->
+    <div id="k-keyboard" class="hidden"></div>
+  </section>
+</div>
+
+<!-- PIN pad for host unlock -->
+<dialog id="k-pin">
+  <h2>Host PIN</h2>
+  <div class="k-pin-display" id="k-pin-display"></div>
+  <div class="k-pin-pad" id="k-pin-pad"></div>
+  <button id="k-pin-cancel" class="ghost">Cancel</button>
+</dialog>
+
+<div id="toast"></div>
+<script src="/static/kiosk.js"></script>
+</body>
+</html>

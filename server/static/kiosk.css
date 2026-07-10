@@ -1,0 +1,88 @@
+/* Kiosk layout — tuned for the official 7" touch display (800x480)
+   but fluid enough for any landscape screen. Big targets, no hover. */
+
+body.kiosk {
+  overflow: hidden;
+  height: 100vh;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.k-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 34%) 1fr;
+  height: 100vh;
+}
+
+/* ---------------- left column ---------------- */
+.k-left {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px; border-right: 1px solid #262a38;
+  background: var(--card);
+}
+.k-brand { font-size: 1.2rem; font-weight: 700; }
+.k-idle { color: var(--muted); margin-top: 20px; }
+
+.k-now { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+#k-art {
+  width: min(100%, 38vh); aspect-ratio: 1; border-radius: 12px;
+  object-fit: cover; background: var(--card-2); align-self: center;
+}
+.k-title { font-size: 1.15rem; font-weight: 700; line-height: 1.25; }
+.k-artist { color: var(--muted); }
+.k-by { color: var(--muted); font-size: .78rem; }
+
+.k-big { padding: 14px; font-size: 1rem; }
+
+.k-host { display: flex; gap: 8px; }
+.k-host button { flex: 1; padding: 14px 6px; font-size: 1.05rem; }
+
+.k-foot {
+  margin-top: auto; display: flex; justify-content: space-between; align-items: center;
+}
+.k-gear {
+  background: transparent; color: var(--muted); font-size: 1.3rem;
+  padding: 8px 12px; border: 1px solid #333848; border-radius: 10px;
+}
+
+/* ---------------- right column ---------------- */
+.k-right {
+  display: flex; flex-direction: column; padding: 14px; gap: 10px; min-height: 0;
+}
+.k-searchrow { display: flex; gap: 8px; }
+.k-searchrow input {
+  flex: 1; font-size: 1.05rem; padding: 14px;
+  background: var(--card-2); border: 1px solid #333848;
+  border-radius: 12px; color: var(--text); outline: none;
+}
+.k-searchrow input.active { border-color: var(--accent-2); }
+#k-clear { font-size: 1.1rem; padding: 0 18px; }
+
+#k-panels { flex: 1; overflow-y: auto; min-height: 0; }
+.k-list li { padding: 12px 2px; }
+.k-list .add-btn { width: 52px; height: 52px; font-size: 1.4rem; }
+.k-list .vote-btn { min-width: 60px; padding: 10px; font-size: .9rem; }
+
+/* ---------------- on-screen keyboard ---------------- */
+#k-keyboard {
+  display: grid; gap: 6px; padding: 8px 0 2px;
+}
+.k-krow { display: flex; gap: 6px; justify-content: center; }
+.k-key {
+  flex: 1; max-width: 9%; padding: 13px 0; font-size: 1.05rem;
+  background: var(--card-2); border: 1px solid #333848; border-radius: 8px;
+  color: var(--text); text-align: center;
+}
+.k-key:active { background: var(--accent-2); }
+.k-key.wide { max-width: 18%; flex: 2; }
+.k-key.space { max-width: 40%; flex: 6; }
+
+/* ---------------- PIN pad ---------------- */
+.k-pin-display {
+  text-align: center; font-size: 1.6rem; letter-spacing: .5em;
+  min-height: 2.2rem; margin: 10px 0;
+}
+.k-pin-pad {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px;
+}
+.k-pin-pad button { padding: 16px; font-size: 1.3rem; }
