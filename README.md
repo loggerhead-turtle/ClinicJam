@@ -74,7 +74,7 @@ the group keeps them in sync automatically.
    your uplink (USB cellular modem or Ethernet), and run:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/HEAD/install/install.sh | sudo bash
+   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/claude/office-clinic-jam-app-voejwh/install/install.sh | sudo bash
    ```
 
 2. Create a (free) Spotify developer app and put its keys in

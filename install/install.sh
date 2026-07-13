@@ -2,7 +2,7 @@
 # ClinicJam installer for Raspberry Pi OS Bookworm (Pi 4/5, 64-bit).
 #
 # One-line install:
-#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/HEAD/install/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/claude/office-clinic-jam-app-voejwh/install/install.sh | sudo bash
 #
 # Or from a clone:
 #   sudo ./install/install.sh
