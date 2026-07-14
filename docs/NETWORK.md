@@ -135,29 +135,42 @@ check_interval_seconds = 120
 probe_url = "http://connectivitycheck.gstatic.com/generate_204"
 ```
 
-Then capture what your specific portal actually does — this is the one
-part that can't be shipped generically, since every vendor's portal is
-different:
+**If your portal is just a single "I agree"/"Connect" button** (no
+username, no email, no CAPTCHA) — the common case — try the automatic
+option first, completely unmodified:
+
+```sh
+cp /opt/clinicjam/docs/portal_click.example.py /etc/clinicjam/portal_click.py
+sudo systemctl restart clinicjam-portal-watch
+sudo journalctl -u clinicjam-portal-watch -f
+```
+
+It follows the portal's redirect to the splash page, then submits
+whatever form or link is on it automatically — most simple click-through
+portals bake a session token or your device's MAC into a hidden form
+field rather than asking you to type anything, so there's usually
+nothing to hand-capture at all. Give it a couple of check cycles
+(`check_interval_seconds`, default 2 minutes) and confirm the Pi actually
+gets online: `curl -I http://neverssl.com` from the Pi should return a
+real page, not a portal redirect.
+
+**If that doesn't get you online**, capture what your specific portal
+does and hand-write it — this is the one part that genuinely can't be
+shipped generically for every vendor:
 
 1. On a laptop, rejoin the guest Wi-Fi fresh so the portal triggers.
 2. Open DevTools → Network tab → check "Preserve log".
-3. Click through the portal's "I agree"/"Connect" button as normal.
+3. Click through the portal's button as normal.
 4. Find the request that fired at that instant (usually a GET with a
    session token in the URL, or a POST with a field like `agree=true`).
    Right-click it → Copy → **Copy as cURL**.
-5. Turn that into your click script:
+5. Paste it into `click_via_curl()` in `/etc/clinicjam/portal_click.py`,
+   and point `__main__` at it instead of `click_auto()`.
 
-   ```sh
-   cp /opt/clinicjam/docs/portal_click.example.py /etc/clinicjam/portal_click.py
-   nano /etc/clinicjam/portal_click.py   # paste your captured request in
-   sudo systemctl restart clinicjam-portal-watch
-   ```
-
-`docs/portal_click.example.py` includes three ready-to-edit patterns:
-a plain `urllib` GET/POST, a near-verbatim pasted `curl` command (usually
-the fastest to get working), and a headless-browser click for portals
-whose button runs JavaScript instead of a plain link. Delete whichever
-you don't use.
+`docs/portal_click.example.py` also includes a headless-browser click
+(`click_via_browser()`) for portals whose button runs JavaScript instead
+of a plain form/link — heavier, only needed if the button truly doesn't
+submit anything a plain HTTP request could replay.
 
 Check that it's working:
 

@@ -188,10 +188,11 @@ cat <<EOF
     4. Uplink is set to 'wifi_client' — the Pi joins another Wi-Fi network
        (e.g. the company's guest network) through a second radio for its
        own internet. If that network has a captive portal, set it up to
-       auto-accept (docs/NETWORK.md#automating-a-captive-portal-uplink):
+       auto-accept (docs/NETWORK.md#automating-a-captive-portal-uplink).
+       If it's just a single "I agree" button, this usually works as-is:
          cp $APP_DIR/docs/portal_click.example.py $CONFIG_DIR/portal_click.py
-         nano $CONFIG_DIR/portal_click.py
          sudo systemctl restart clinicjam-portal-watch
+       Otherwise edit $CONFIG_DIR/portal_click.py per the docs.
 EOF
 fi
 
