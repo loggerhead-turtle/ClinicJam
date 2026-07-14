@@ -92,6 +92,17 @@ else
     say "Keeping existing $CONFIG_DIR/config.toml"
 fi
 
+# ------------------------------------------------------------------ uplink
+# How the Pi itself reaches the internet (Spotify, speaker check-in) —
+# separate from the guest jam Wi-Fi. Defaults to a no-op (cellular/ethernet,
+# handled natively by NetworkManager). See [uplink] in config.toml for the
+# wifi_client option (joining an existing network like the company's guest
+# Wi-Fi through a second radio) and docs/NETWORK.md for captive-portal
+# auto-accept setup.
+say "Configuring the Pi's own internet uplink..."
+chmod +x "$APP_DIR/install/setup-uplink.sh"
+"$APP_DIR/install/setup-uplink.sh" || warn "uplink setup needs attention (see messages above) — fix $CONFIG_DIR/config.toml and re-run: sudo $APP_DIR/install/setup-uplink.sh"
+
 # ------------------------------------------------------------------ python env
 say "Setting up the Python environment..."
 python3 -m venv "$APP_DIR/venv"
@@ -147,12 +158,16 @@ systemd-tmpfiles --create /etc/tmpfiles.d/clinicjam.conf
 systemctl daemon-reload
 systemctl enable --now \
     clinicjam-network clinicjam-firewall clinicjam-hostapd \
-    clinicjam-dnsmasq clinicjam-web clinicjam-librespot
+    clinicjam-dnsmasq clinicjam-web clinicjam-librespot clinicjam-portal-watch
 
 AP_IP=$(python3 -c "
 import tomllib
 cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
 print(cfg.get('network',{}).get('ap_ip','10.24.7.1'))")
+UPLINK_MODE=$(python3 -c "
+import tomllib
+cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
+print(cfg.get('uplink',{}).get('mode','cellular'))")
 
 say "ClinicJam is installed! 🎵"
 cat <<EOF
@@ -166,6 +181,21 @@ cat <<EOF
          Host panel:     http://$AP_IP/admin
     3. Put your 5 Nest speakers on the jam Wi-Fi and allowlist their MACs
        (docs/NEST_SETUP.md), then: sudo clinicjam-apply
+EOF
+
+if [ "$UPLINK_MODE" = "wifi_client" ]; then
+cat <<EOF
+    4. Uplink is set to 'wifi_client' — the Pi joins another Wi-Fi network
+       (e.g. the company's guest network) through a second radio for its
+       own internet. If that network has a captive portal, set it up to
+       auto-accept (docs/NETWORK.md#automating-a-captive-portal-uplink):
+         cp $APP_DIR/docs/portal_click.example.py $CONFIG_DIR/portal_click.py
+         nano $CONFIG_DIR/portal_click.py
+         sudo systemctl restart clinicjam-portal-watch
+EOF
+fi
+
+cat <<EOF
 
   Service health:  systemctl status 'clinicjam-*'
   Logs:            journalctl -u clinicjam-web -f

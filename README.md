@@ -15,7 +15,9 @@ The whole point of this design is that **nothing here touches the company
 network**:
 
 - The Pi gets its own internet from a **USB cellular modem** (or any
-  uplink you plug in). The office network is never used and never shared.
+  uplink you plug in — Ethernet, or even the company's own guest Wi-Fi
+  through a second radio, see [docs/NETWORK.md](docs/NETWORK.md#alternative-uplink-joining-another-wi-fi-network-eg-the-office-guest-network)).
+  The office network is never used and never shared onward.
 - Guest phones join the Pi's private Wi-Fi and get **zero internet
   access** — the firewall forwards nothing for them. The Wi-Fi is a
   kiosk for the jam app, not an internet hotspot.

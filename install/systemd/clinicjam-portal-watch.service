@@ -1,0 +1,14 @@
+[Unit]
+Description=ClinicJam captive-portal auto-accept watcher (Pi's own uplink)
+After=network-online.target clinicjam-web.service
+Wants=network-online.target
+
+[Service]
+User=clinicjam
+Group=clinicjam
+ExecStart=/opt/clinicjam/venv/bin/python /opt/clinicjam/install/portal_watch.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

@@ -66,3 +66,107 @@ From the Pi:
 sudo nft list table inet clinicjam      # see the drop rules + allowlist
 sudo journalctl -u clinicjam-dnsmasq -f # watch leases as devices join
 ```
+
+## Alternative uplink: joining another Wi-Fi network (e.g. the office guest network)
+
+By default the Pi's own internet (for Spotify, speaker check-in, and OS
+updates) comes from a cellular modem or Ethernet — see `docs/HARDWARE.md`.
+If you'd rather not run a cellular plan, the Pi can instead join an
+**existing Wi-Fi network as a client** — for example, the company's own
+guest Wi-Fi — for its uplink. This is a different thing from the jam
+Wi-Fi guests join, and the two never touch:
+
+```
+   company guest Wi-Fi                    "ClinicJam" Wi-Fi (unchanged)
+   (their AP, their internet)             (the Pi's AP, zero internet)
+        │                                        │
+   USB Wi-Fi dongle (wlan1) ── Raspberry Pi ── built-in radio (wlan0)
+        joins as a client        │              broadcasts the jam AP
+                                  ▼
+                    Spotify, speaker check-in, OS updates
+```
+
+This needs a **second radio** — a USB Wi-Fi dongle (~$10–15) — because the
+Pi's built-in radio is already fully committed to hosting the jam AP; one
+radio can't be an access point and a Wi-Fi client at the same time. It's
+the same as any employee's laptop joining the guest network: the Pi only
+consumes that connection for itself, it never re-shares it — guests on
+the jam Wi-Fi still get zero internet, exactly as before.
+
+To set it up:
+
+```toml
+# /etc/clinicjam/config.toml
+[uplink]
+mode = "wifi_client"
+
+[uplink.wifi_client]
+interface = "wlan1"        # the USB dongle — must differ from ap_interface
+ssid = "CompanyGuest"
+psk = ""                   # leave blank for an open network
+```
+
+```sh
+sudo /opt/clinicjam/install/setup-uplink.sh
+```
+
+This creates a NetworkManager connection profile for the dongle, so it
+reconnects automatically on boot or after a Wi-Fi drop — no different
+from how your laptop remembers a network.
+
+## Automating a captive-portal uplink
+
+Many office guest networks show a "click to accept" splash page before
+granting real internet. Since nothing is watching the screen on a
+headless Pi, that would otherwise leave the uplink stuck forever. A
+small watcher (`clinicjam-portal-watch`) polls for that stuck state and
+replays the accept step automatically — you write the site-specific part
+once, and it runs unattended after that.
+
+**This only affects the Pi's own uplink.** It's unrelated to the
+intentional captive portal guests see on the jam Wi-Fi.
+
+Enable it in config.toml:
+
+```toml
+[uplink.captive_portal]
+enabled = true
+check_interval_seconds = 120
+probe_url = "http://connectivitycheck.gstatic.com/generate_204"
+```
+
+Then capture what your specific portal actually does — this is the one
+part that can't be shipped generically, since every vendor's portal is
+different:
+
+1. On a laptop, rejoin the guest Wi-Fi fresh so the portal triggers.
+2. Open DevTools → Network tab → check "Preserve log".
+3. Click through the portal's "I agree"/"Connect" button as normal.
+4. Find the request that fired at that instant (usually a GET with a
+   session token in the URL, or a POST with a field like `agree=true`).
+   Right-click it → Copy → **Copy as cURL**.
+5. Turn that into your click script:
+
+   ```sh
+   cp /opt/clinicjam/docs/portal_click.example.py /etc/clinicjam/portal_click.py
+   nano /etc/clinicjam/portal_click.py   # paste your captured request in
+   sudo systemctl restart clinicjam-portal-watch
+   ```
+
+`docs/portal_click.example.py` includes three ready-to-edit patterns:
+a plain `urllib` GET/POST, a near-verbatim pasted `curl` command (usually
+the fastest to get working), and a headless-browser click for portals
+whose button runs JavaScript instead of a plain link. Delete whichever
+you don't use.
+
+Check that it's working:
+
+```sh
+sudo journalctl -u clinicjam-portal-watch -f
+```
+
+A quick heads-up worth giving whoever manages that guest Wi-Fi: this sets
+up an unattended device that auto-accepts their network's terms on its
+own, indefinitely. It doesn't share that connection with anyone else —
+the Pi uses it exactly like one more employee laptop — but it's a
+reasonable thing to mention rather than do silently.
