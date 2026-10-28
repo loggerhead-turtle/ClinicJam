@@ -11,5 +11,20 @@ ExecStart=/opt/clinicjam/venv/bin/python -m clinicjam.main
 Restart=always
 RestartSec=3
 
+# Resource ceiling (tuned for a Pi 4 2GB — generous headroom, not a tight
+# budget): covers this process plus the ffmpeg encoder it spawns as a
+# child, while leaving room for hostapd/dnsmasq/librespot alongside it.
+MemoryHigh=300M
+MemoryMax=400M
+CPUQuota=150%
+
+# Sandboxing: this process only ever needs to read its own install, read
+# config, and read/write its own state and runtime dirs.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clinicjam /run/clinicjam
+
 [Install]
 WantedBy=multi-user.target

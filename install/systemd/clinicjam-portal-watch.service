@@ -10,5 +10,18 @@ ExecStart=/opt/clinicjam/venv/bin/python /opt/clinicjam/install/portal_watch.py
 Restart=always
 RestartSec=15
 
+# Resource ceiling: this is a small polling loop, generous headroom still
+# costs nothing on a Pi 4 2GB. If your own portal_click.py launches a
+# headless browser (Option C — Playwright), raise MemoryMax accordingly;
+# a browser process needs well more than this default.
+MemoryHigh=100M
+MemoryMax=150M
+CPUQuota=50%
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
 [Install]
 WantedBy=multi-user.target

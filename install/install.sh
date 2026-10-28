@@ -69,28 +69,71 @@ fi
 id clinicjam >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin clinicjam
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$APP_DIR/bin"
 chown -R clinicjam:clinicjam "$DATA_DIR"
+# $DATA_DIR holds the Spotify refresh token and librespot's cache. Owner
+# (clinicjam) only — Unix permissions on a directory block even listing
+# what's inside it to anyone else, regardless of the files' own modes.
+chmod 700 "$DATA_DIR"
 
 # ------------------------------------------------------------------ config
+validate_pin() {
+    # Keep PINs to what the on-screen numeric pads (phones/kiosk) can
+    # enter: digits only, 4-8 of them.
+    [[ "$1" =~ ^[0-9]{4,8}$ ]]
+}
+
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     say "Creating $CONFIG_DIR/config.toml..."
     cp "$APP_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
 
     if [ -t 0 ]; then
         read -rp "Wi-Fi network name for guests [ClinicJam]: " SSID
-        read -rp "Admin PIN for the host panel [2468]: " PIN
-        read -rp "Jam PIN guests enter to join (empty = no PIN) [1357]: " GUESTPIN
+        SSID=${SSID:-ClinicJam}
+
+        PIN=""
+        while ! validate_pin "$PIN"; do
+            read -rp "Admin PIN for the host panel, 4-8 digits [2468]: " PIN
+            PIN=${PIN:-2468}
+            validate_pin "$PIN" || echo "   Digits only, 4-8 of them — try again."
+        done
+
+        GUESTPIN=""
+        read -rp "Jam PIN guests enter to join, 4-8 digits (blank = no PIN) [1357]: " GUESTPIN
+        GUESTPIN=${GUESTPIN-1357}
+        while [ -n "$GUESTPIN" ] && ! validate_pin "$GUESTPIN"; do
+            read -rp "   Digits only, 4-8 of them (or blank for no PIN): " GUESTPIN
+        done
+
         read -rp "Two-letter Wi-Fi country code [US]: " COUNTRY
-        SSID=${SSID:-ClinicJam}; PIN=${PIN:-2468}; GUESTPIN=${GUESTPIN-1357}; COUNTRY=${COUNTRY:-US}
+        COUNTRY=${COUNTRY:-US}
+
+        echo
+        echo "  A password-protected jam Wi-Fi keeps the PIN you just set (and"
+        echo "  everything else on that network) from being readable by anyone"
+        echo "  nearby with a Wi-Fi sniffer — an open network sends everything,"
+        echo "  PINs included, in the clear over the air. WPA2 is recommended."
+        read -rp "Wi-Fi password for guests (blank = open network, not recommended): " WIFIPASS
+
         sed -i "s/^ssid = .*/ssid = \"${SSID//\//\\/}\"/" "$CONFIG_DIR/config.toml"
         sed -i "s/^admin_pin = .*/admin_pin = \"${PIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
         sed -i "s/^guest_pin = .*/guest_pin = \"${GUESTPIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
         sed -i "s/^country = .*/country = \"${COUNTRY//\//\\/}\"/" "$CONFIG_DIR/config.toml"
+        if [ -n "$WIFIPASS" ]; then
+            sed -i "s/^wpa2_passphrase = .*/wpa2_passphrase = \"${WIFIPASS//\//\\/}\"/" "$CONFIG_DIR/config.toml"
+        fi
     else
         warn "Non-interactive install: edit $CONFIG_DIR/config.toml afterwards (SSID, admin PIN, Spotify keys)."
     fi
 else
     say "Keeping existing $CONFIG_DIR/config.toml"
 fi
+
+# This file holds the Spotify client secret and both PINs in plain text —
+# readable by the clinicjam group only, not by other local accounts. The
+# directory itself needs the same group so clinicjam-web/librespot/
+# portal-watch (which run as that user) can still traverse into it.
+chgrp clinicjam "$CONFIG_DIR" "$CONFIG_DIR/config.toml" 2>/dev/null || true
+chmod 750 "$CONFIG_DIR"
+chmod 640 "$CONFIG_DIR/config.toml"
 
 # ------------------------------------------------------------------ uplink
 # How the Pi itself reaches the internet (Spotify, speaker check-in) —
@@ -149,6 +192,17 @@ systemctl reload NetworkManager 2>/dev/null || true
 # Routing on (the firewall decides who may actually be forwarded).
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/90-clinicjam.conf
 sysctl -q --system
+
+# Cap how much of the SD card the system log can eat over months of
+# unattended uptime — journald's default is sized for a desktop with much
+# more disk, and runs several always-on services here.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/clinicjam.conf <<'EOF'
+[Journal]
+SystemMaxUse=200M
+SystemMaxFileSize=20M
+EOF
+systemctl restart systemd-journald 2>/dev/null || true
 
 # ------------------------------------------------------------------ services
 say "Installing systemd services..."

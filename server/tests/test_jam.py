@@ -105,6 +105,28 @@ def test_active_device_count_expires():
     assert jam.active_device_count() == 1
 
 
+def test_prune_stale_devices_removes_only_old_entries():
+    jam = make_jam()
+    jam.touch_device("ancient")
+    jam.devices["ancient"]["last_seen"] = time.time() - 10 * 24 * 3600  # 10 days
+    jam.touch_device("fresh")
+    removed = jam.prune_stale_devices(max_age_seconds=2 * 24 * 3600)
+    assert removed == 1
+    assert "ancient" not in jam.devices
+    assert "fresh" in jam.devices
+
+
+def test_prune_stale_devices_keeps_bans_intact():
+    # Bans live in a separate set, keyed by device id — pruning the
+    # devices dict (last-seen bookkeeping) must never un-ban anyone.
+    jam = make_jam()
+    jam.touch_device("troublemaker")
+    jam.devices["troublemaker"]["last_seen"] = time.time() - 10 * 24 * 3600
+    jam.banned.add("troublemaker")
+    jam.prune_stale_devices(max_age_seconds=2 * 24 * 3600)
+    assert "troublemaker" in jam.banned
+
+
 def test_public_state_shape():
     jam = make_jam()
     item = jam.add(make_track(), "dev1", "Ann")

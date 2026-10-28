@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,6 +115,9 @@ class StateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, indent=2))
+        # This file holds the Spotify refresh token — owner-only, belt and
+        # suspenders alongside the install-time directory permissions.
+        tmp.chmod(stat.S_IRUSR | stat.S_IWUSR)
         tmp.replace(self.path)
 
     @property

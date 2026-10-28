@@ -92,9 +92,14 @@ class AudioStreamer:
         self._ffmpeg = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-hide_banner", "-loglevel", "error",
+            # One MP3 encode at this bitrate needs nowhere near a full
+            # core; capping threads keeps ffmpeg from contending with the
+            # web server, librespot, and (if installed) the kiosk browser
+            # for the Pi 4's four cores.
+            "-threads", "2",
             "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", str(CHANNELS),
             "-i", "pipe:0",
-            "-f", "mp3", "-b:a", self.bitrate,
+            "-f", "mp3", "-threads", "1", "-b:a", self.bitrate,
             "pipe:1",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

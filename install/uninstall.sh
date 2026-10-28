@@ -14,9 +14,11 @@ systemctl daemon-reload
 nft delete table inet clinicjam 2>/dev/null || true
 nft delete table ip clinicjam_nat 2>/dev/null || true
 rm -f /etc/NetworkManager/conf.d/clinicjam-unmanaged.conf \
-      /etc/sysctl.d/90-clinicjam.conf /usr/local/sbin/clinicjam-apply
+      /etc/sysctl.d/90-clinicjam.conf /usr/local/sbin/clinicjam-apply \
+      /etc/systemd/journald.conf.d/clinicjam.conf
 nmcli connection delete clinicjam-uplink 2>/dev/null || true
 systemctl reload NetworkManager 2>/dev/null || true
+systemctl restart systemd-journald 2>/dev/null || true
 
 if [ "${1:-}" = "--purge" ]; then
     rm -rf /opt/clinicjam /etc/clinicjam /var/lib/clinicjam

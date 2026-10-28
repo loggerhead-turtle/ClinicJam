@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+import urllib.parse
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -24,6 +25,7 @@ from .config import Config, StateStore
 from .events import Hub
 from .jam import Jam, JamError
 from .player import Player
+from .security import LoginRateLimiter, SessionStore
 from .spotify import SpotifyClient, SpotifyError
 from .stream import AudioStreamer
 
@@ -44,8 +46,19 @@ cast.set_target(state.settings.get("cast_target", ""))
 player = Player(jam, spotify, cast, state)
 hub = Hub()
 
-admin_sessions: set[str] = set()
-guest_sessions: set[str] = set()
+SESSION_TTL_SECONDS = 86400 * 30  # matches the cookie's max_age below
+admin_sessions = SessionStore(SESSION_TTL_SECONDS)
+guest_sessions = SessionStore(SESSION_TTL_SECONDS)
+
+# PIN brute-force protection: a handful of wrong guesses locks that
+# client out for a minute. Admin and guest PINs are tracked separately
+# since guessing one says nothing about the other.
+admin_login_limiter = LoginRateLimiter(max_attempts=5, window_seconds=60, lockout_seconds=60)
+guest_login_limiter = LoginRateLimiter(max_attempts=10, window_seconds=60, lockout_seconds=30)
+
+
+def _client_key(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 # Hostnames/paths phones probe to decide whether a captive portal exists.
 PORTAL_PROBE_PATHS = {
@@ -66,6 +79,20 @@ def _schedule_broadcast() -> None:
 player.on_change = _schedule_broadcast
 
 
+def _prune_long_lived_state() -> None:
+    """Run hourly. Nothing here affects correctness — it only keeps
+    memory bounded on a device meant to stay running for months: expired
+    login sessions, devices that stopped showing up days ago, and
+    rate-limiter bookkeeping for IPs that haven't been seen in a while."""
+    removed_devices = jam.prune_stale_devices()
+    admin_sessions.prune()
+    guest_sessions.prune()
+    admin_login_limiter.prune()
+    guest_login_limiter.prune()
+    if removed_devices:
+        log.info("pruned %d stale device record(s)", removed_devices)
+
+
 async def _lifespan(app: FastAPI):
     await streamer.start()
     await cast.start_discovery()
@@ -74,15 +101,20 @@ async def _lifespan(app: FastAPI):
     async def ticker() -> None:
         # Progress bars advance client-side; a slow heartbeat keeps
         # listener counts and stragglers fresh.
+        tick_count = 0
         while True:
             await asyncio.sleep(10)
             _schedule_broadcast()
+            tick_count += 1
+            if tick_count % 360 == 0:  # roughly every hour
+                _prune_long_lived_state()
 
     tick = asyncio.create_task(ticker())
     yield
     tick.cancel()
     await player.stop()
     await streamer.stop()
+    await cast.stop_discovery()
 
 
 app = FastAPI(title="ClinicJam", lifespan=_lifespan)
@@ -109,6 +141,28 @@ async def captive_portal(request: Request, call_next):
         # Guest browser aimed at some internet site the walled garden
         # blocks — bring them home to the jam instead.
         return RedirectResponse(f"http://{config.ap_ip}/", status_code=302)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def same_origin_check(request: Request, call_next):
+    """Lightweight CSRF mitigation: a state-changing request must claim to
+    come from this same server. The walled-garden firewall already blocks
+    outside sites from reaching guests at all, so the realistic threat
+    here is one guest's phone luring another guest's browser to a
+    malicious local page (e.g. a phone running its own tiny web server)
+    that fires requests at the jam API using the victim's cookies. This
+    is cheap, has no user-facing downside for the app's own pages (every
+    fetch() call in app.js/kiosk.js/admin.js is same-origin), and blocks
+    that class of request outright.
+    """
+    if request.method in ("POST", "PUT", "DELETE", "PATCH") and request.url.path.startswith("/api"):
+        origin = request.headers.get("origin") or request.headers.get("referer")
+        if origin:
+            origin_host = urllib.parse.urlparse(origin).netloc.split(":")[0]
+            request_host = (request.headers.get("host") or "").split(":")[0]
+            if origin_host and request_host and origin_host != request_host:
+                return JSONResponse({"detail": "Cross-origin request blocked"}, status_code=403)
     return await call_next(request)
 
 
@@ -155,16 +209,26 @@ class GuestLoginBody(BaseModel):
 
 
 @app.post("/api/login")
-async def guest_login(body: GuestLoginBody, response: Response):
+async def guest_login(body: GuestLoginBody, request: Request, response: Response):
+    key = _client_key(request)
+    wait = guest_login_limiter.retry_after(key)
+    if wait > 0:
+        raise HTTPException(429, f"Too many attempts — try again in {int(wait) + 1}s",
+                             headers={"Retry-After": str(int(wait) + 1)})
     # The admin PIN is accepted here too, so the host never has to juggle.
     valid = (
         config.guest_pin and secrets.compare_digest(body.pin, config.guest_pin)
     ) or secrets.compare_digest(body.pin, config.admin_pin)
     if not (valid or not config.guest_pin):
+        guest_login_limiter.record_failure(key)
         raise HTTPException(401, "Wrong PIN")
+    guest_login_limiter.record_success(key)
     token = secrets.token_urlsafe(24)
-    guest_sessions.add(token)
-    response.set_cookie("clinicjam_guest", token, httponly=True, max_age=86400 * 30)
+    guest_sessions.issue(token)
+    response.set_cookie(
+        "clinicjam_guest", token, httponly=True, samesite="lax",
+        max_age=SESSION_TTL_SECONDS,
+    )
     return {"ok": True}
 
 
@@ -308,12 +372,22 @@ class LoginBody(BaseModel):
 
 
 @app.post("/api/admin/login")
-async def admin_login(body: LoginBody, response: Response):
+async def admin_login(body: LoginBody, request: Request, response: Response):
+    key = _client_key(request)
+    wait = admin_login_limiter.retry_after(key)
+    if wait > 0:
+        raise HTTPException(429, f"Too many attempts — try again in {int(wait) + 1}s",
+                             headers={"Retry-After": str(int(wait) + 1)})
     if not secrets.compare_digest(body.pin, config.admin_pin):
+        admin_login_limiter.record_failure(key)
         raise HTTPException(401, "Wrong PIN")
+    admin_login_limiter.record_success(key)
     token = secrets.token_urlsafe(24)
-    admin_sessions.add(token)
-    response.set_cookie("clinicjam_admin", token, httponly=True, max_age=86400 * 30)
+    admin_sessions.issue(token)
+    response.set_cookie(
+        "clinicjam_admin", token, httponly=True, samesite="lax",
+        max_age=SESSION_TTL_SECONDS,
+    )
     return {"ok": True}
 
 

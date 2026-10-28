@@ -23,5 +23,17 @@ ExecStart=/usr/bin/librespot \
 Restart=always
 RestartSec=5
 
+# Resource ceiling (Pi 4 2GB): librespot typically runs 25-40MB; this
+# caps a runaway well before it could pressure the rest of the system.
+MemoryHigh=150M
+MemoryMax=200M
+CPUQuota=100%
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/clinicjam /run/clinicjam
+
 [Install]
 WantedBy=multi-user.target

@@ -48,6 +48,18 @@ class Jam:
         cutoff = time.time() - ACTIVE_WINDOW_SECONDS
         return sum(1 for d in self.devices.values() if d["last_seen"] >= cutoff)
 
+    def prune_stale_devices(self, max_age_seconds: float = 2 * 24 * 3600) -> int:
+        """Drop devices not seen in a while so `self.devices` doesn't grow
+        forever over a months-long deployment (every phone that's ever
+        joined would otherwise sit in memory permanently). Bans survive —
+        they're keyed by device id in a separate set, not here. Returns the
+        number of entries removed."""
+        cutoff = time.time() - max_age_seconds
+        stale = [did for did, info in self.devices.items() if info["last_seen"] < cutoff]
+        for did in stale:
+            del self.devices[did]
+        return len(stale)
+
     def _check_allowed(self, device_id: str) -> None:
         if device_id in self.banned:
             raise JamError("This device has been blocked by the host.")

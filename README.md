@@ -72,6 +72,11 @@ the group keeps them in sync automatically.
 
 ## Quick start
 
+**New to this?** [docs/QUICKSTART.md](docs/QUICKSTART.md) is a complete,
+no-assumptions walkthrough from "blank SD card" to "music playing on the
+Nest speakers," written for a Pi 4 + USB Wi-Fi dongle uplink setup.
+The condensed version:
+
 1. Flash **Raspberry Pi OS Bookworm (64-bit)** to a Pi 4 or Pi 5, plug in
    your uplink (USB cellular modem or Ethernet), and run:
 
@@ -106,11 +111,13 @@ the group keeps them in sync automatically.
 
 ## Documentation
 
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — the full step-by-step, start to finish
 - [docs/HARDWARE.md](docs/HARDWARE.md) — shopping list and physical setup
 - [docs/NETWORK.md](docs/NETWORK.md) — the walled garden, captive portal, and firewall in detail
 - [docs/SPOTIFY_SETUP.md](docs/SPOTIFY_SETUP.md) — API keys and account linking
 - [docs/NEST_SETUP.md](docs/NEST_SETUP.md) — speakers, the Cast group, MAC allowlist
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how the pieces fit together
+- [docs/SECURITY.md](docs/SECURITY.md) — the security/reliability audit and what it changed
 
 ## Honest limitations
 

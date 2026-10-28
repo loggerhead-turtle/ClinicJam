@@ -58,6 +58,14 @@ class CastController:
         )
         self._browser.start_discovery()
 
+    async def stop_discovery(self) -> None:
+        """Tear down the zeroconf browser thread on shutdown. Systemd kills
+        the whole process on a service restart regardless, but this keeps
+        the app well-behaved if it's ever run outside systemd (dev, tests)."""
+        if self._browser is not None:
+            await asyncio.to_thread(self._browser.stop_discovery)
+            self._browser = None
+
     def devices(self) -> list[dict[str, Any]]:
         if not self._browser:
             return []
