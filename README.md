@@ -93,7 +93,7 @@ Every click of that is spelled out with screenshots-in-words in
 Installing onto an existing Raspberry Pi OS instead of flashing the image:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/main/install/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/claude/office-clinic-jam-app-voejwh/install/install.sh | sudo bash
 ```
 
 ## Repository layout

@@ -4,7 +4,7 @@
 # Normally you don't run this: flash the ready-made image instead
 # (docs/QUICKSTART.md). It is here for installing onto an existing Pi OS:
 #
-#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/main/install/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/claude/office-clinic-jam-app-voejwh/install/install.sh | sudo bash
 #   sudo ./install/install.sh            # from a clone
 #
 # It is also what the image build runs inside the chroot
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO_URL="${CLINICJAM_REPO_URL:-https://github.com/loggerhead-turtle/ClinicJam.git}"
-REPO_REF="${CLINICJAM_REPO_REF:-main}"
+REPO_REF="${CLINICJAM_REPO_REF:-claude/office-clinic-jam-app-voejwh}"
 APP_DIR=/opt/clinicjam
 CONFIG_DIR=/etc/clinicjam
 DATA_DIR=/var/lib/clinicjam
