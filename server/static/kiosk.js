@@ -105,7 +105,10 @@
     for (const item of state.queue) {
       const vote = document.createElement("button");
       vote.className = "vote-btn" + (item.voted ? " voted" : "");
-      vote.innerHTML = `<span class="n">${item.votes}</span>▲`;
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = String(item.votes);
+      vote.append(n, "▲");
       vote.onclick = async () => {
         try {
           state = await api(`/api/queue/${item.id}/vote`, {
@@ -271,9 +274,14 @@
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        // Short-lived host session on the shared screen (15 min).
+        body: JSON.stringify(pinMode === "guest" ? { pin } : { pin, short: true }),
       });
-      if (!resp.ok) throw new Error("Wrong PIN");
+      if (!resp.ok) {
+        let msg = "Wrong PIN";
+        try { msg = (await resp.json()).detail || msg; } catch {}
+        throw new Error(msg);
+      }
       $("#k-pin").close();
       if (pinMode === "guest") {
         toast("Jam unlocked 🎵");
@@ -290,10 +298,16 @@
     }
   }
 
+  function relock() {
+    hostUnlocked = false;
+    $("#k-host-controls").classList.add("hidden");
+    fetch("/api/admin/logout", { method: "POST" }).catch(() => {});
+  }
   $("#k-lock").onclick = () => {
     if (hostUnlocked) {
-      // toggle visibility so the strip can be re-hidden on a shared screen
-      $("#k-host-controls").classList.toggle("hidden");
+      // Tapping the gear again really locks: the host session is dropped.
+      relock();
+      toast("Host controls locked");
       return;
     }
     openPinPad("admin");
@@ -304,7 +318,7 @@
 
   const hostApi = (path) => () =>
     fetch(path, { method: "POST" }).then((r) => {
-      if (r.status === 401) { hostUnlocked = false; $("#k-host-controls").classList.add("hidden"); toast("Session expired — unlock again"); }
+      if (r.status === 401) { relock(); toast("Session expired — unlock again"); }
       else if (!r.ok) toast("Action failed");
     });
   $("#k-pause").onclick = hostApi("/api/admin/playback/pause");

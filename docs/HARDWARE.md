@@ -7,14 +7,18 @@
 | Raspberry Pi 4 (2 GB+) or Pi 5 | The built-in radio covers a waiting-room-sized area and ~15–20 phones comfortably |
 | Official USB-C power supply | Undervoltage causes flaky Wi-Fi — don't skimp here |
 | microSD card, 16 GB+ (A1/A2 class) | For Raspberry Pi OS Bookworm 64-bit |
-| USB cellular modem + data SIM | e.g. a USB 4G dongle with a Mint Mobile SIM. This is the Pi's ONLY internet. Steady-state usage is just Spotify audio for one stream (~150 MB/hr at 320 kbps) plus a trickle from the speakers |
-| 5× Google Nest Audio | Already owned — they join the Pi's Wi-Fi |
+| An uplink for the Pi — one of: an Ethernet jack; a USB Wi-Fi dongle (joins the office/guest Wi-Fi); a USB cellular modem + SIM | This is the Pi's ONLY internet. Steady-state usage is one Spotify stream (~150 MB/hr at 320 kbps) plus a trickle from the speakers |
+| Google Nest speakers (any number) | Already owned — they join the Pi's Wi-Fi |
+
+Not needed: a Bluetooth dongle. Cast speakers take music over Wi-Fi only,
+and Bluetooth could not keep several rooms in sync.
 
 Optional:
 
-- **Ethernet cable** — if you'd rather uplink through a wall jack than
-  cellular, plug it in; the firewall behaves identically (guests still get
-  nothing).
+- **USB Wi-Fi dongle** — most common chipsets (Realtek 8188/8192/8821,
+  MediaTek 7601/7610/7612, Ralink, Atheros 9271) have in-kernel drivers on
+  Raspberry Pi OS and show up as `wlan1`. If `ip link` on the Pi doesn't
+  list it, that dongle needs an out-of-tree driver — use Ethernet instead.
 - **Case with airflow** — the Pi runs a Wi-Fi AP, an encoder, and a web
   server; passive cooling is fine but give it air.
 
@@ -38,6 +42,8 @@ ip route show default   # default route should point at the modem
 ```
 
 `[uplink] interfaces` in `/etc/clinicjam/config.toml` is documentation of
-intent — the firewall NATs allowlisted traffic out whatever non-AP
+intent — the firewall NATs allowlisted traffic out whatever non-jam
 interface holds the default route, so a modem, Ethernet, or a USB Wi-Fi
-dongle all work without config changes.
+dongle all work without config changes. The image ships with ModemManager
+disabled (`sudo systemctl enable --now ModemManager` for a modem that
+needs it; most RNDIS/ECM dongles don't).

@@ -2,9 +2,14 @@
 
 pychromecast is thread-based; every blocking call is pushed through
 asyncio.to_thread so the event loop stays responsive. The admin selects a
-cast target — ideally a speaker group containing all five Nests, created
+cast target — ideally a speaker group containing all the Nests, created
 once in the Google Home app, which gives perfectly synced multi-room
 audio for free — and we cast the Pi's local live MP3 stream to it.
+
+Object lifecycle matters on a small box: a Chromecast object owns a
+socket-client thread once connected. We create exactly one per device
+uuid, reuse it across discovery updates, and disconnect it when the
+device disappears or the service stops.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +36,9 @@ class CastController:
         self._casts: dict[str, Any] = {}  # uuid -> Chromecast
         self._target_uuid: str = ""
         self._lock = threading.Lock()
+        # Called from the discovery thread with (uuid, host) when a cast
+        # device appears; main.py uses it to auto-allowlist speakers.
+        self.on_device_seen: Callable[[str, str, str], None] | None = None
 
     # ---------------- discovery ----------------
 
@@ -40,39 +48,85 @@ class CastController:
             return
         await asyncio.to_thread(self._start_discovery_blocking)
 
+    async def stop(self) -> None:
+        if not HAVE_PYCHROMECAST:
+            return
+        await asyncio.to_thread(self._stop_blocking)
+
+    def _stop_blocking(self) -> None:
+        with self._lock:
+            casts = list(self._casts.values())
+            self._casts.clear()
+        for cast in casts:
+            try:
+                cast.disconnect(timeout=2)
+            except Exception:
+                pass
+        if self._browser:
+            try:
+                self._browser.stop_discovery()
+            except Exception:
+                pass
+            self._browser = None
+
     def _start_discovery_blocking(self) -> None:
         def add_cast(uuid, _service):
-            cast = pychromecast.get_chromecast_from_cast_info(
-                self._browser.devices[uuid], self._browser.zc
-            )
+            key = str(uuid)
+            info = self._browser.devices.get(uuid)
             with self._lock:
-                self._casts[str(uuid)] = cast
+                known = key in self._casts
+            if not known and info is not None:
+                try:
+                    cast = pychromecast.get_chromecast_from_cast_info(info, self._browser.zc)
+                except Exception:
+                    log.exception("could not create cast object for %s", key)
+                    return
+                with self._lock:
+                    if key in self._casts:
+                        return
+                    self._casts[key] = cast
+            if info is not None and self.on_device_seen:
+                try:
+                    self.on_device_seen(key, str(getattr(info, "host", "") or ""),
+                                        str(getattr(info, "friendly_name", "") or ""))
+                except Exception:
+                    log.exception("on_device_seen failed")
+
+        def update_cast(uuid, _service):
+            add_cast(uuid, _service)
 
         def remove_cast(uuid, _service, _cast_info):
             with self._lock:
-                self._casts.pop(str(uuid), None)
+                cast = self._casts.pop(str(uuid), None)
+            if cast is not None:
+                try:
+                    cast.disconnect(timeout=2)
+                except Exception:
+                    pass
 
-        listener = pychromecast.discovery.SimpleCastListener(add_cast, remove_cast)
-        self._browser = pychromecast.discovery.CastBrowser(
-            listener, zeroconf_instance=None
-        )
+        listener = pychromecast.discovery.SimpleCastListener(add_cast, remove_cast, update_cast)
+        self._browser = pychromecast.discovery.CastBrowser(listener, zeroconf_instance=None)
         self._browser.start_discovery()
 
     def devices(self) -> list[dict[str, Any]]:
         if not self._browser:
             return []
         out = []
-        for uuid, info in self._browser.devices.items():
+        for uuid, info in dict(self._browser.devices).items():
             out.append(
                 {
                     "uuid": str(uuid),
                     "name": info.friendly_name,
                     "model": info.model_name,
+                    "host": str(getattr(info, "host", "") or ""),
                     "is_group": info.cast_type == "group",
                     "selected": str(uuid) == self._target_uuid,
                 }
             )
         return sorted(out, key=lambda d: (not d["is_group"], d["name"]))
+
+    def device_hosts(self) -> set[str]:
+        return {d["host"] for d in self.devices() if d["host"]}
 
     # ---------------- target + playback ----------------
 
@@ -117,12 +171,14 @@ class CastController:
         cast = self._target_cast()
         if cast is None:
             return
+
         def _stop():
             try:
                 cast.wait(timeout=5)
                 cast.quit_app()
             except Exception:
                 log.exception("stop_casting failed")
+
         await asyncio.to_thread(_stop)
 
     # ---------------- volume ----------------
@@ -133,6 +189,7 @@ class CastController:
             cast = self._casts.get(uuid) if uuid else self._casts.get(self._target_uuid)
         if cast is None:
             return False
+
         def _set():
             try:
                 cast.wait(timeout=5)
@@ -141,12 +198,14 @@ class CastController:
             except Exception:
                 log.exception("set_volume failed")
                 return False
+
         return await asyncio.to_thread(_set)
 
     async def status(self) -> dict[str, Any]:
         cast = self._target_cast()
         if cast is None:
             return {"connected": False}
+
         def _status():
             try:
                 cast.wait(timeout=5)
@@ -162,4 +221,5 @@ class CastController:
                 }
             except Exception:
                 return {"connected": False}
+
         return await asyncio.to_thread(_status)

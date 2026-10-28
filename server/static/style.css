@@ -147,3 +147,9 @@ input[type=range] { flex: 1; accent-color: var(--accent); }
 .status-line b.ok { color: var(--accent); }
 .status-line b.bad { color: var(--danger); }
 button.danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+
+.hdr-link { color: var(--muted); font-size: .85rem; text-decoration: none; margin-right: 14px; }
+header button.ghost { padding: 4px 10px; font-size: .8rem; }
+#warn-list { padding-left: 18px; margin: 0; }
+#warn-list li { margin: 4px 0; }
+code { font-size: .85em; }

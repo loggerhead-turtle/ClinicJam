@@ -1,79 +1,65 @@
 # Google Nest speaker setup
 
-Goal: all five Nest Audio speakers on the **jam Wi-Fi**, grouped into one
-Chromecast **speaker group**, with their MACs allowlisted for internet
-through the Pi's uplink.
+Goal: all the Nest speakers on the **jam Wi-Fi**, grouped into one Cast
+**speaker group**, allowlisted for their trickle of internet. On the image
+this is mostly automatic; here is what happens and what to do when it
+doesn't.
 
-Why the allowlist: the music is streamed to the speakers locally by the
-Pi, but Cast devices misbehave without any internet at all (they want
-Google check-in and time sync). The allowlist gives exactly those five
-devices a small pipe out the Pi's own cellular/Ethernet uplink — still
-nothing to do with the company network, and guests remain fully blocked.
+## 1. Turn on setup mode
 
-## 1. Find each speaker's MAC address
+Host panel (`http://10.24.7.1/admin`) → **Speakers → Turn on setup mode
+(30 min)**. While it's on, every device on the jam Wi-Fi has internet and
+phones can talk to the speakers — both of which the Google Home app needs.
+It turns itself off; tap again if you run out of time.
 
-If the speakers are already set up somewhere: Google Home app → speaker →
-⚙️ Settings → **Device information** → Wi-Fi MAC address.
+## 2. Put the speakers on the jam Wi-Fi
 
-If they're factory-fresh, you can do this after step 3 instead — the
-lease list on the Pi shows MACs as devices join:
+With your phone on the jam Wi-Fi, in the **Google Home** app:
 
-```sh
-cat /var/lib/misc/dnsmasq.leases 2>/dev/null; sudo journalctl -u clinicjam-dnsmasq | grep DHCPACK
-```
+1. **+ → Set up device → New device.** Factory-fresh speakers are found
+   straight away. An already-set-up speaker: factory-reset it (Nest Audio:
+   hold the mute switch area / the button on the back ~15 s until it says
+   so) and it becomes "new".
+2. When asked which Wi-Fi the speaker should use, pick the **jam SSID** and
+   enter the jam Wi-Fi password.
+3. Repeat for every speaker.
 
-## 2. Allowlist them
+Each speaker appears in the host panel's **Internet allowlist** within a
+minute of joining — that is its MAC being allowlisted automatically. (If
+one doesn't, add its MAC by hand: Google Home → speaker → ⚙️ → Device
+information → Wi-Fi MAC address, or read it from
+`sudo journalctl -u clinicjam-dnsmasq`.)
 
-```sh
-sudo nano /etc/clinicjam/config.toml
-```
+## 3. Create the speaker group
 
-```toml
-[internet_allowlist]
-macs = [
-  "aa:bb:cc:dd:ee:01",   # Reception
-  "aa:bb:cc:dd:ee:02",   # Hallway
-  "aa:bb:cc:dd:ee:03",   # Break room
-  "aa:bb:cc:dd:ee:04",   # Office east
-  "aa:bb:cc:dd:ee:05",   # Office west
-]
-```
+Google Home: **+ → Create speaker group**, select all the Nests, name it
+e.g. `Office`. The group is what makes all of them play in perfect sync —
+the Pi casts one stream to the group and the speakers handle timing among
+themselves.
 
-```sh
-sudo clinicjam-apply
-```
+## 4. Point the jam at the group
 
-## 3. Move the speakers onto the jam Wi-Fi
+Host panel → **Speakers** → ↻ → choose `🔊 group: Office`. Set a starting
+volume. Start the jam and all speakers should light up within a few seconds.
 
-With your phone on the jam Wi-Fi (and your phone's MAC *temporarily*
-added to the allowlist too — the Google Home app needs internet during
-setup; remove it afterwards):
+Setup mode can end now (it will by itself).
 
-1. Factory-reset or "Set up new device" in the Google Home app.
-2. When asked which Wi-Fi the speaker should use, pick the jam SSID.
-3. Repeat for all five.
+## Why the allowlist
 
-Tip: if the jam Wi-Fi is open (no password), Google Home handles that
-fine; if you set a WPA2 passphrase in config.toml, have it ready.
-
-## 4. Create the speaker group
-
-In Google Home: **+ → Create speaker group**, select all five Nests, name
-it something like `Office`. The group is what makes all five play in
-perfect sync — the Pi casts one stream to the group and the speakers
-handle timing among themselves.
-
-## 5. Point the jam at the group
-
-Admin panel → **Speakers** → refresh → choose `🔊 group: Office`.
-Set a starting volume. Done — start the jam and all five speakers should
-light up within a few seconds.
+The music is streamed to the speakers locally by the Pi, but Cast devices
+misbehave without any internet at all (they want Google check-in and time
+sync). The allowlist gives exactly those devices a narrow pipe — Google's
+ports, public addresses only — out the Pi's own uplink. Guests remain fully
+blocked, and the office network is never involved.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| Group doesn't appear in the admin panel | All speakers powered + on the jam Wi-Fi? Give discovery ~30 s, hit refresh |
-| Speakers connect then drop after a while | Their MACs really in the allowlist? `sudo nft list table inet clinicjam` |
-| Audio stutters | Wi-Fi congestion — try another `channel` in config.toml, `sudo clinicjam-apply` |
+| Google Home can't find / finish a speaker | Setup mode on? Phone on the jam Wi-Fi (not mobile data)? |
+| Group doesn't appear in the host panel | All speakers powered + on the jam Wi-Fi? Give discovery ~30 s, tap ↻ |
+| Speakers connect then drop after a while | Their MACs in the allowlist? `sudo clinicjam-fw status` |
+| Only one speaker of the group plays | The station-to-station bridge isn't passing frames on your hardware: set `client_isolation = no` in the settings file and reboot (docs/NETWORK.md) |
+| Audio stutters | Try `wifi_band = 5`, or another `channel` in config.toml, `sudo clinicjam-apply` |
 | One speaker lags the others | Recreate the speaker group in Google Home; groups re-sync on creation |
+| "Speakers: no target selected" after a reboot | Pick the group again under Speakers (it is remembered once chosen) |

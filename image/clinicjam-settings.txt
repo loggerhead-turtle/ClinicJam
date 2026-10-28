@@ -1,0 +1,74 @@
+# =====================================================================
+#   ClinicJam settings  —  this is the ONLY file you need to edit.
+# =====================================================================
+#
+#   1. Open this file in Notepad (Windows) or TextEdit (Mac).
+#   2. Change the values after the "=" signs.  Lines starting with # are
+#      just notes; the Pi ignores them.
+#   3. Save, eject the SD card, put it in the Raspberry Pi, power on.
+#
+#   The Pi reads this file EVERY time it boots. Changed something?
+#   Pull the card, edit, boot again. After each boot the Pi writes
+#   clinicjam-status.txt next to this file saying what it did.
+#
+# ---------------------------------------------------------------------
+#   The jam Wi-Fi  (the network the Pi creates — phones and the Nest
+#   speakers join THIS one)
+# ---------------------------------------------------------------------
+
+jam_wifi_name = ClinicJam
+
+# 8 to 63 characters. Everyone (and every speaker) types this once.
+# Leave it empty for an open network with no password (not recommended:
+# anyone in range could watch the Wi-Fi traffic).
+jam_wifi_password = change-me-please
+
+# Two-letter country code for the radio (US, CA, GB, AU, DE, ...).
+country = US
+
+# ---------------------------------------------------------------------
+#   PINs
+# ---------------------------------------------------------------------
+
+# The host PIN for the admin page (http://10.24.7.1/admin).
+# 6 digits or more. CHANGE IT.
+admin_pin = 246813
+
+# The jam PIN guests type to search / queue / vote. Post it at the desk.
+# Leave empty to let anyone on the jam Wi-Fi join without a PIN.
+guest_pin = 1357
+
+# ---------------------------------------------------------------------
+#   How the Pi itself gets on the internet  (for Spotify)
+# ---------------------------------------------------------------------
+#
+#   EASIEST: plug an Ethernet cable into the Pi and leave both lines
+#   below empty.
+#
+#   OR: plug in a USB Wi-Fi dongle and let the Pi join your office or
+#   guest Wi-Fi as if it were one more laptop. The Pi NEVER shares that
+#   network with anyone — guests on the jam Wi-Fi get no internet at all.
+
+office_wifi_name =
+office_wifi_password =
+
+# ---------------------------------------------------------------------
+#   Login for the Pi itself  (only needed for troubleshooting over SSH)
+# ---------------------------------------------------------------------
+#
+#   The user name is  admin .  Set a password (8+ characters) here to
+#   turn SSH on. Leave it empty and SSH stays off.
+
+login_password =
+
+# ---------------------------------------------------------------------
+#   Advanced (fine to leave alone)
+# ---------------------------------------------------------------------
+
+# Wi-Fi band for the jam network: 2.4 reaches further; 5 is faster and
+# less crowded. Nest speakers and modern phones support both.
+wifi_band = 2.4
+
+# Keep phones from talking to each other / to the speakers directly.
+# Only set this to no if the speaker group refuses to play on all speakers.
+client_isolation = yes

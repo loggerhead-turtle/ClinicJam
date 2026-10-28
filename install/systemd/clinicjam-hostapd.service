@@ -1,12 +1,19 @@
 [Unit]
 Description=ClinicJam Wi-Fi access point (hostapd)
-After=clinicjam-network.service
-Requires=clinicjam-network.service
+After=clinicjam-network.service clinicjam-firewall.service
+Requires=clinicjam-network.service clinicjam-firewall.service
 
 [Service]
 ExecStart=/usr/sbin/hostapd /etc/clinicjam/hostapd.conf
+ExecStartPost=/opt/clinicjam/bin/ap-hairpin.sh
 Restart=always
 RestartSec=3
+# hostapd needs raw netlink; keep the rest locked down.
+ProtectSystem=strict
+ReadWritePaths=/run
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -23,7 +23,9 @@ back to OPTION B (manual capture) or OPTION C (headless browser) below.
 """
 from __future__ import annotations
 
+import ipaddress
 import re
+import socket
 import subprocess
 import sys
 import tomllib
@@ -32,6 +34,27 @@ import urllib.request
 from html.parser import HTMLParser
 
 CONFIG_PATH = "/etc/clinicjam/config.toml"
+MAX_BODY = 256 * 1024   # a splash page is small; never slurp a huge response
+
+
+def _safe_target(url: str, splash_host: str) -> bool:
+    """Only ever submit to the portal itself — never to the Pi, the jam
+    network, or anything private the office network might expose. A rogue
+    or spoofed portal must not be able to turn this script into a proxy."""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    if host != splash_host:
+        return False
+    try:
+        for info in socket.getaddrinfo(host, None):
+            addr = ipaddress.ip_address(info[4][0])
+            if addr.is_loopback or addr.is_link_local or addr.is_multicast:
+                return False
+    except (socket.gaierror, ValueError):
+        return False
+    return True
 
 # Words that mark a link as "the accept button" rather than, say, a link
 # to the terms-of-service PDF sitting next to it on the same splash page.
@@ -106,7 +129,7 @@ def _find_splash_page(probe_url: str) -> tuple[str, str] | None:
         probe_url, headers={"User-Agent": "Mozilla/5.0 (compatible; ClinicJam)"}
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
-        body = resp.read()
+        body = resp.read(MAX_BODY)
         if resp.status == 204 and not body:
             return None
         return resp.geturl(), body.decode("utf-8", "ignore")
@@ -114,6 +137,9 @@ def _find_splash_page(probe_url: str) -> tuple[str, str] | None:
 
 def _submit_form(base_url: str, form: dict) -> bool:
     action = urllib.parse.urljoin(base_url, form["action"] or base_url)
+    if not _safe_target(action, urllib.parse.urlparse(base_url).hostname or ""):
+        print(f"refusing to submit to {action}: not the portal host", file=sys.stderr)
+        return False
     data = urllib.parse.urlencode(form["fields"]).encode()
     if form["method"] == "post":
         req = urllib.request.Request(action, data=data, method="POST")
@@ -135,7 +161,11 @@ def _follow_best_link(base_url: str, links: list[tuple[str, str]]) -> bool:
     best = max(candidates, key=score)
     if score(best) == 0:
         return False  # nothing looked like an accept link — don't guess wrong
-    with urllib.request.urlopen(urllib.parse.urljoin(base_url, best[0]), timeout=10) as resp:
+    target = urllib.parse.urljoin(base_url, best[0])
+    if not _safe_target(target, urllib.parse.urlparse(base_url).hostname or ""):
+        print(f"refusing to follow {target}: not the portal host", file=sys.stderr)
+        return False
+    with urllib.request.urlopen(target, timeout=10) as resp:
         return resp.status < 400
 
 

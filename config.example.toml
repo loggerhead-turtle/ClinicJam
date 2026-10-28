@@ -1,36 +1,53 @@
 # ClinicJam configuration.
-# The installer copies this to /etc/clinicjam/config.toml — edit it there.
+# The installer copies this to /etc/clinicjam/config.toml — edit it there,
+# then run `sudo clinicjam-apply`.
+#
+# If you flashed the ready-made image you normally never touch this file:
+# clinicjam-settings.txt on the SD card's boot partition fills in the
+# important values (Wi-Fi name/password, PINs, office Wi-Fi) at every boot.
 
 [network]
-# Wireless interface that hosts the private Jam network (the Pi 4's built-in radio).
+# Wireless interface that hosts the private jam network (the Pi's built-in radio).
 ap_interface = "wlan0"
-# The Pi's address on the Jam network. Guests and Nest speakers get DHCP leases here.
+# The Pi's address on the jam network. Guests and Nest speakers get DHCP leases here.
+# (The address one up — 10.24.7.2 — is the speakers' DNS resolver.)
 ap_ip = "10.24.7.1"
 dhcp_range_start = "10.24.7.50"
 dhcp_range_end = "10.24.7.250"
 ssid = "ClinicJam"
 # Two-letter regulatory domain for the radio.
 country = "US"
+# "2.4" reaches further through walls; "5" is faster and less crowded
+# (all Nest speakers and modern phones support 5 GHz). Channel 6 / 36 by default.
+band = "2.4"
 channel = 6
-# Leave empty for an open network (typical for captive portals).
-# Set 8+ characters to require a WPA2 password instead.
+# Strongly recommended: 8+ characters. Empty = open network, which means
+# anyone in range can watch traffic (including PIN logins) go by.
 wpa2_passphrase = ""
+# Keep phones from talking to each other or to the speakers directly
+# (the Cast protocol has no password — without this any guest could cast
+# straight to the Nests). The speakers can still reach each other for
+# group sync. Turn off only if group playback misbehaves on your hardware.
+client_isolation = true
+# SSH into the Pi from the jam Wi-Fi? Off by default (SSH stays reachable
+# from the uplink/Ethernet side and the console).
+ssh_from_jam_wifi = false
 
 [uplink]
 # How the Pi itself gets internet (for Spotify + speaker check-in). This is
-# completely separate from the guest jam Wi-Fi below — guests are NEVER
+# completely separate from the guest jam Wi-Fi above — guests are NEVER
 # forwarded to this connection no matter which mode you pick.
 #
-#   "cellular"    — USB cellular modem (usb0/wwan0), handled by NetworkManager
-#   "ethernet"    — wired uplink (eth0)
+#   "ethernet"    — wired uplink (eth0); also what a USB cellular modem looks like
+#   "cellular"    — same thing, kept for clarity (usb0/wwan0 via NetworkManager)
 #   "wifi_client" — a SECOND radio (a USB Wi-Fi dongle, e.g. wlan1) joins an
 #                   existing Wi-Fi network as a client — e.g. the company's
 #                   guest Wi-Fi. Requires a dongle because the Pi's built-in
 #                   radio (wlan0) is already busy hosting the jam AP.
-mode = "cellular"
+mode = "ethernet"
 
 # Interfaces tried (in order) when mode = "cellular" or "ethernet".
-interfaces = ["usb0", "wwan0", "eth0"]
+interfaces = ["eth0", "usb0", "wwan0"]
 
 # Only used when mode = "wifi_client".
 [uplink.wifi_client]
@@ -38,7 +55,7 @@ interfaces = ["usb0", "wwan0", "eth0"]
 # same interface as [network] ap_interface.
 interface = "wlan1"
 ssid = ""
-# Leave blank for an open network; WPA2 personal password otherwise.
+# WPA2 personal password. Leave blank only for a truly open network
 # (802.1X/enterprise company Wi-Fi needs manual NetworkManager setup —
 # see docs/NETWORK.md.)
 psk = ""
@@ -58,10 +75,11 @@ check_interval_seconds = 120
 probe_url = "http://connectivitycheck.gstatic.com/generate_204"
 
 [internet_allowlist]
-# MAC addresses permitted to reach the internet through the uplink.
-# Add your 5 Google Nest speakers here: they need a trickle of internet for
-# Google's check-in/time sync (the music itself is streamed locally by the Pi).
-# Find the MACs in the Google Home app: speaker -> Settings -> Device information.
+# MAC addresses permitted a trickle of internet through the uplink (Google
+# check-in / time sync for the speakers — the music itself is streamed
+# locally by the Pi). You normally don't need to fill this in: speakers
+# found on the jam Wi-Fi are allowlisted automatically and shown in the
+# admin panel. Entries here are added on top.
 macs = [
   # "aa:bb:cc:dd:ee:01",
 ]
@@ -70,20 +88,28 @@ macs = [
 # The web app listens here; the firewall redirects guest port-80 traffic to it.
 port = 8080
 # PIN for the admin panel at /admin — full control: settings, speakers,
-# moderation, bans. CHANGE THIS.
+# moderation, bans. Use 6+ digits. CHANGE THIS.
 admin_pin = "2468"
 # PIN guests must enter before they can search, queue, or vote. Share it
 # with the team / post it on the wall. Guests with this PIN can NOT change
 # any settings. Leave empty ("") to let anyone on the Wi-Fi join the jam.
 guest_pin = "1357"
+# Automatically give any Cast device that appears on the jam Wi-Fi the
+# internet trickle it needs (recommended).
+auto_allow_cast_devices = true
 
 [spotify]
-# Create an app at https://developer.spotify.com/dashboard and paste its
-# credentials here. See docs/SPOTIFY_SETUP.md for the 5-minute walkthrough.
+# Nothing to fill in for the default setup: the admin panel links the
+# office Spotify Premium account with a copy-paste login (Spotify's own
+# desktop client id, PKCE, no secret). That one login also signs the
+# player in.
+#
+# OPTIONAL: if you prefer your own Spotify developer app for the Web API
+# (search/playback control), create one at
+# https://developer.spotify.com/dashboard with redirect URI
+# http://127.0.0.1:8888/callback and fill these in (docs/SPOTIFY_SETUP.md).
 client_id = ""
 client_secret = ""
-# Loopback redirect — Spotify permits plain HTTP only for 127.0.0.1.
-# The admin panel walks you through the copy-paste authorization flow.
 redirect_uri = "http://127.0.0.1:8888/callback"
 # Name the Pi announces as a Spotify Connect device.
 device_name = "ClinicJam"
@@ -93,6 +119,8 @@ device_name = "ClinicJam"
 stream_bitrate = "320k"
 # Raw PCM pipe written by librespot and read by the streamer service.
 fifo_path = "/run/clinicjam/audio.fifo"
+# How many clients may pull /stream.mp3 at once (the speaker group is one).
+max_stream_clients = 6
 
 [paths]
 # Runtime state (Spotify tokens, admin-tunable settings, bans) lives here.

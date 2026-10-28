@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 
 POLL_SECONDS = 5.0
 CAST_CHECK_SECONDS = 20.0
+# librespot events that mean "this track is over, move on".
+TRACK_OVER_EVENTS = {"end_of_track", "stopped", "unavailable"}
 
 
 class Player:
@@ -48,6 +50,7 @@ class Player:
         self._wake = asyncio.Event()
         self._track_ended = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._cast_task: asyncio.Task | None = None
         self._device_id: str = ""
         self._fallback_pool: list[Track] = []
         self._fallback_source: str = ""
@@ -60,21 +63,28 @@ class Player:
             self._task = asyncio.create_task(self._run(), name="player-loop")
 
     async def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        for task in (self._task, self._cast_task):
+            if task:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+        self._task = None
+        self._cast_task = None
 
     def wake(self) -> None:
         """Something changed (song added, jam started) — re-evaluate now."""
         self._wake.set()
 
     def notify_librespot_event(self, event: str) -> None:
-        # librespot fires 'end_of_track' when a song finishes naturally and
-        # 'stopped' when playback halts entirely.
-        if event in ("end_of_track", "stopped"):
+        if event in TRACK_OVER_EVENTS:
             self._track_ended.set()
+        elif event == "paused":
+            self.jam.set_paused(True)
+            self._changed()
+        elif event == "playing":
+            if self.jam.paused:
+                self.jam.set_paused(False)
+                self._changed()
         self._wake.set()
 
     def _changed(self) -> None:
@@ -104,12 +114,12 @@ class Player:
 
     async def pause(self) -> None:
         await self.spotify.pause()
-        self.jam.paused = True
+        self.jam.set_paused(True)
         self._changed()
 
     async def resume(self) -> None:
         await self.spotify.resume()
-        self.jam.paused = False
+        self.jam.set_paused(False)
         self._changed()
 
     # ---------------- fallback playlist ----------------
@@ -123,6 +133,7 @@ class Player:
                 tracks = await self.spotify.playlist_tracks(source)
             except SpotifyError as e:
                 log.warning("fallback playlist unavailable: %s", e)
+                self.last_error = f"Fallback playlist: {e}"[:200]
                 return None
             if self.state.settings.get("explicit_filter"):
                 tracks = [t for t in tracks if not t.explicit]
@@ -132,6 +143,13 @@ class Player:
         return self._fallback_pool.pop() if self._fallback_pool else None
 
     # ---------------- main loop ----------------
+
+    def _check_cast(self) -> None:
+        # Keep a reference so the task is neither garbage-collected
+        # mid-flight nor started twice while a previous check is running.
+        if self._cast_task and not self._cast_task.done():
+            return
+        self._cast_task = asyncio.create_task(self.cast.ensure_casting(), name="cast-check")
 
     async def _run(self) -> None:
         last_cast_check = 0.0
@@ -144,7 +162,7 @@ class Player:
                 # Keep the speakers latched onto our live stream.
                 if time.monotonic() - last_cast_check > CAST_CHECK_SECONDS:
                     last_cast_check = time.monotonic()
-                    asyncio.create_task(self.cast.ensure_casting())
+                    self._check_cast()
 
                 if self.jam.now_playing is None:
                     await self._play_next()
@@ -181,7 +199,7 @@ class Player:
             if item.device_id:
                 self.jam.queue.insert(0, item)
             self.last_error = (
-                "Spotify Connect device not found — is the audio service running?"
+                "Spotify player not linked or not running — see 'Player' in the admin panel."
             )
             await self._sleep(5.0)
             return
@@ -215,10 +233,9 @@ class Player:
         # Backstop: if our progress estimate says the song should be over,
         # confirm with the API (protects against a missed librespot event).
         now = self.jam.now_playing
-        if now is None:
+        if now is None or self.jam.paused:
             return
-        elapsed_ms = (time.time() - self.jam.playing_since) * 1000
-        if elapsed_ms < now.track.duration_ms + 2000:
+        if self.jam.progress_ms() < now.track.duration_ms:
             return
         try:
             playback = await self.spotify.playback_state()

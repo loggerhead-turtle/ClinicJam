@@ -1,12 +1,17 @@
 [Unit]
-Description=ClinicJam DHCP/DNS for the jam network (dnsmasq)
-After=clinicjam-network.service
+Description=ClinicJam DHCP + sinkhole DNS for guests (dnsmasq)
+After=clinicjam-network.service clinicjam-firewall.service
 Requires=clinicjam-network.service
 
 [Service]
+ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/etc/clinicjam/dnsmasq.conf
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/clinicjam/dnsmasq.conf
 Restart=always
 RestartSec=3
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clinicjam /run
+ProtectHome=yes
+PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target

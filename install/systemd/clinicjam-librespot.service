@@ -1,27 +1,30 @@
 [Unit]
-Description=ClinicJam Spotify Connect endpoint (librespot -> PCM fifo)
+Description=ClinicJam Spotify Connect player (librespot -> PCM fifo)
 # The web service holds the read end of the fifo open; start after it so
 # librespot's writes have somewhere to go.
-After=clinicjam-web.service
-Wants=clinicjam-web.service
+After=clinicjam-web.service network-online.target
+Wants=clinicjam-web.service network-online.target
 
 [Service]
 User=clinicjam
 Group=clinicjam
 EnvironmentFile=/etc/clinicjam/librespot.env
-ExecStart=/usr/bin/librespot \
-    --name "${DEVICE_NAME}" \
-    --backend pipe \
-    --device /run/clinicjam/audio.fifo \
-    --bitrate 320 \
-    --format S16 \
-    --onevent /opt/clinicjam/bin/onevent.sh \
-    --cache /var/lib/clinicjam/librespot-cache \
-    --cache-size-limit 1G \
-    --initial-volume 100 \
-    --volume-ctrl fixed
+ExecStart=/opt/clinicjam/bin/run-librespot.sh
 Restart=always
 RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clinicjam /run/clinicjam
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=400M
 
 [Install]
 WantedBy=multi-user.target

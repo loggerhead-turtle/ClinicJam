@@ -150,7 +150,10 @@
     for (const item of state.queue) {
       const vote = document.createElement("button");
       vote.className = "vote-btn" + (item.voted ? " voted" : "");
-      vote.innerHTML = `<span class="n">${item.votes}</span>▲`;
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = String(item.votes);
+      vote.append(n, "▲");
       vote.onclick = async () => {
         try {
           state = await api(`/api/queue/${item.id}/vote`, {

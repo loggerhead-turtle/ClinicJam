@@ -1,0 +1,92 @@
+name: Build Raspberry Pi image
+
+# Produces clinicjam-<version>.img.xz: flash it with Raspberry Pi Imager,
+# edit clinicjam-settings.txt on the boot partition, done.
+#
+# Runs on every version tag (v1.2.3) and on demand from the Actions tab.
+# The result is attached to a GitHub Release so it has a stable download
+# link, and also kept as a workflow artifact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Also publish a GitHub (pre)release with the image"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static binfmt-support xz-utils parted e2fsprogs dosfstools openssl
+          # Make sure the arm64 interpreter is registered for chroots.
+          sudo update-binfmts --enable qemu-aarch64 || true
+          ls /proc/sys/fs/binfmt_misc/ | grep -i aarch64
+
+      - name: Cache base image
+        uses: actions/cache@v4
+        with:
+          path: image/build/*.img.xz
+          key: raspios-${{ hashFiles('image/build-image.sh') }}
+
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            v="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+            echo "version=$v" >> "$GITHUB_OUTPUT"
+            echo "tag=image-$v" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image
+        run: sudo VERSION="${{ steps.ver.outputs.version }}" image/build-image.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clinicjam-${{ steps.ver.outputs.version }}
+          path: |
+            image/out/*.img.xz
+            image/out/*.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.ver.outputs.tag }}"
+          notes="Flashable ClinicJam image for Raspberry Pi 4 / Pi 5 (64-bit).
+
+          1. Download the .img.xz below.
+          2. Flash it with Raspberry Pi Imager (Use custom image). Skip Imager's own customisation.
+          3. Open the boot drive that appears, edit clinicjam-settings.txt, eject.
+          4. Boot the Pi. Full instructions: docs/QUICKSTART.md"
+          pre=""
+          [ "${{ steps.ver.outputs.prerelease }}" = "true" ] && pre="--prerelease"
+          gh release create "$tag" --target "$GITHUB_SHA" --title "ClinicJam image ${{ steps.ver.outputs.version }}" --notes "$notes" $pre \
+            image/out/*.img.xz image/out/*.sha256 \
+          || gh release upload "$tag" image/out/*.img.xz image/out/*.sha256 --clobber

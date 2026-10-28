@@ -1,0 +1,15 @@
+[Unit]
+Description=ClinicJam: apply clinicjam-settings.txt from the boot partition
+# Runs every boot (cheap when nothing changed). After the Pi OS first-boot
+# user setup, before the jam services so they start with the right config.
+After=local-fs.target userconfig.service systemd-tmpfiles-setup.service
+Before=clinicjam-network.service NetworkManager.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 /opt/clinicjam/bin/apply_settings.py
+
+[Install]
+WantedBy=multi-user.target

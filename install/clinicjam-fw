@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""clinicjam-fw — the one privileged helper for the jam's firewall.
+
+Runs as root. Called two ways:
+
+  * by systemd (clinicjam-fw.path -> clinicjam-fw.service) whenever the
+    unprivileged web service drops a request file into
+    /run/clinicjam/fw-queue — the web service itself has no sudo and
+    no privileges at all;
+  * by hand:  clinicjam-fw allow aa:bb:cc:dd:ee:ff "Reception"
+              clinicjam-fw revoke aa:bb:cc:dd:ee:ff
+              clinicjam-fw setup-mode 1800 | off
+              clinicjam-fw sync        # reload allowlist into the live sets
+              clinicjam-fw status
+
+Every request is validated against a strict allowlist of operations and
+argument formats before it touches nft, and the live state is published
+to /run/clinicjam/fw-state.json (world-readable, no secrets) for the UI.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+RUN_DIR = Path("/run/clinicjam")
+QUEUE_DIR = RUN_DIR / "fw-queue"
+STATE_FILE = RUN_DIR / "fw-state.json"
+ALLOWLIST = Path("/etc/clinicjam/allowlist.json")
+NET_ENV = Path("/etc/clinicjam/network.env")
+SETUP_UNIT = "clinicjam-setup-mode-off"
+COMMENT = "setup-mode"
+
+MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+NAME_RE = re.compile(r"[^A-Za-z0-9 ._'-]")
+
+# (family, table) pairs that carry a nest_macs set. The bridge table only
+# exists when client isolation is on; errors there are ignored.
+MAC_SET_TABLES = [("inet", "clinicjam"), ("ip", "clinicjam_nat"), ("bridge", "clinicjam")]
+
+
+def log(msg: str) -> None:
+    print(f"clinicjam-fw: {msg}", flush=True)
+
+
+def nft(*args: str, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["nft", *args], check=check, capture_output=capture, text=True, timeout=20
+    )
+
+
+def net_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    try:
+        for line in NET_ENV.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
+    except OSError:
+        pass
+    env.setdefault("JAM_IF", "wlan0")
+    env.setdefault("AP_IP", "10.24.7.1")
+    env.setdefault("DNS_IP", "10.24.7.2")
+    env.setdefault("CLIENT_ISOLATION", "0")
+    return env
+
+
+# ---------------------------------------------------------------- allowlist
+
+def load_allowlist() -> dict[str, dict]:
+    try:
+        data = json.loads(ALLOWLIST.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_allowlist(data: dict[str, dict]) -> None:
+    tmp = ALLOWLIST.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, ALLOWLIST)
+
+
+def set_op(op: str, mac: str) -> None:
+    for family, table in MAC_SET_TABLES:
+        try:
+            nft(op, "element", family, table, "nest_macs", f"{{ {mac} }}", capture=True)
+        except subprocess.CalledProcessError as e:
+            if family == "bridge":
+                continue  # table absent when isolation is off
+            # "delete" of a missing element is fine; anything else is not.
+            if op == "delete" and "No such file" in (e.stderr or ""):
+                continue
+            log(f"nft {op} {family} {table}: {e.stderr.strip()}")
+
+
+def allow(mac: str, name: str) -> None:
+    data = load_allowlist()
+    data[mac] = {"name": name, "added": int(time.time())}
+    save_allowlist(data)
+    set_op("add", mac)
+    log(f"allowed {mac} ({name})")
+
+
+def revoke(mac: str) -> None:
+    data = load_allowlist()
+    data.pop(mac, None)
+    save_allowlist(data)
+    set_op("delete", mac)
+    # Kill its existing connections too so the change is immediate.
+    subprocess.run(["conntrack", "-D", "-m", mac], capture_output=True)  # optional tool
+    log(f"revoked {mac}")
+
+
+def sync() -> None:
+    for mac in load_allowlist():
+        if MAC_RE.match(mac):
+            set_op("add", mac)
+
+
+# ---------------------------------------------------------------- setup mode
+
+def _rules_with_comment(family: str, table: str, chain: str) -> list[int]:
+    try:
+        out = nft("-j", "list", "chain", family, table, chain, capture=True).stdout
+        doc = json.loads(out)
+    except (subprocess.CalledProcessError, ValueError):
+        return []
+    handles = []
+    for item in doc.get("nftables", []):
+        rule = item.get("rule")
+        if rule and rule.get("comment") == COMMENT:
+            handles.append(int(rule["handle"]))
+    return handles
+
+
+def setup_mode_off() -> None:
+    env = net_env()
+    for family, table, chain in (
+        ("inet", "clinicjam", "forward"),
+        ("ip", "clinicjam_nat", "prerouting"),
+        ("bridge", "clinicjam", "forward"),
+    ):
+        for handle in _rules_with_comment(family, table, chain):
+            nft("delete", "rule", family, table, chain, "handle", str(handle), check=False)
+    subprocess.run(["systemctl", "stop", f"{SETUP_UNIT}.timer"], capture_output=True)
+    # Drop every NAT/conntrack entry made while the garden was open.
+    subprocess.run(["conntrack", "-F"], capture_output=True)
+    write_state(setup_until=0)
+    log("setup mode OFF — walled garden restored")
+    _ = env
+
+
+def setup_mode_on(seconds: int) -> None:
+    env = net_env()
+    jam_if, dns_ip = env["JAM_IF"], env["DNS_IP"]
+    setup_mode_off()  # idempotent: never stack rules
+    c = f'comment "{COMMENT}"'
+    # Order matters: insert = prepend, so add in reverse of desired order.
+    nft("insert", "rule", "ip", "clinicjam_nat", "prerouting",
+        f'iifname "{jam_if}" accept {c}')
+    nft("insert", "rule", "ip", "clinicjam_nat", "prerouting",
+        f'iifname "{jam_if}" tcp dport 53 dnat to {dns_ip} {c}')
+    nft("insert", "rule", "ip", "clinicjam_nat", "prerouting",
+        f'iifname "{jam_if}" udp dport 53 dnat to {dns_ip} {c}')
+    nft("insert", "rule", "inet", "clinicjam", "forward",
+        f'iifname "{jam_if}" ip daddr != @private_nets accept {c}')
+    if env.get("CLIENT_ISOLATION") == "1":
+        nft("insert", "rule", "bridge", "clinicjam", "forward", f"accept {c}", check=False)
+    subprocess.run(
+        ["systemd-run", "--quiet", f"--unit={SETUP_UNIT}", f"--on-active={seconds}",
+         "/usr/local/sbin/clinicjam-fw", "setup-mode", "off"],
+        check=False,
+    )
+    write_state(setup_until=int(time.time()) + seconds)
+    log(f"setup mode ON for {seconds}s — the jam Wi-Fi has internet and phones can reach the speakers")
+
+
+# ---------------------------------------------------------------- state
+
+def write_state(setup_until: int | None = None) -> None:
+    current = {}
+    try:
+        current = json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        pass
+    if setup_until is None:
+        setup_until = int(current.get("setup_mode_until", 0))
+        if setup_until and setup_until < time.time():
+            setup_until = 0
+    state = {
+        "allowed": load_allowlist(),
+        "setup_mode_until": setup_until,
+        "updated": int(time.time()),
+    }
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, STATE_FILE)
+
+
+# ---------------------------------------------------------------- queue
+
+def handle(request: dict) -> None:
+    op = request.get("op")
+    if op == "allow":
+        mac = str(request.get("mac", "")).lower()
+        name = NAME_RE.sub("", str(request.get("name", "")))[:40] or "device"
+        if MAC_RE.match(mac):
+            allow(mac, name)
+    elif op == "revoke":
+        mac = str(request.get("mac", "")).lower()
+        if MAC_RE.match(mac):
+            revoke(mac)
+    elif op == "setup-mode":
+        seconds = int(request.get("seconds", 0))
+        if 0 < seconds <= 4 * 3600:
+            setup_mode_on(seconds)
+        else:
+            setup_mode_off()
+    elif op == "restart-librespot":
+        subprocess.run(["systemctl", "restart", "clinicjam-librespot"], check=False)
+        log("restarted clinicjam-librespot")
+    else:
+        log(f"ignoring unknown request {op!r}")
+
+
+def process_queue() -> None:
+    if not QUEUE_DIR.is_dir():
+        return
+    for path in sorted(QUEUE_DIR.iterdir()):
+        if path.suffix != ".json":
+            continue
+        try:
+            if path.stat().st_size > 4096:
+                raise ValueError("request too large")
+            request = json.loads(path.read_text())
+            if not isinstance(request, dict):
+                raise ValueError("not an object")
+            handle(request)
+        except Exception as e:  # one bad request must not block the rest
+            log(f"bad request {path.name}: {e}")
+        finally:
+            path.unlink(missing_ok=True)
+    write_state()
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0:
+        print("clinicjam-fw must run as root", file=sys.stderr)
+        return 1
+    cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "process-queue":
+        process_queue()
+    elif cmd == "allow" and len(argv) >= 3:
+        mac = argv[2].lower().replace("-", ":")
+        if not MAC_RE.match(mac):
+            print("bad MAC", file=sys.stderr)
+            return 2
+        allow(mac, NAME_RE.sub("", " ".join(argv[3:]))[:40] or "device")
+        write_state()
+    elif cmd == "revoke" and len(argv) >= 3:
+        mac = argv[2].lower().replace("-", ":")
+        if not MAC_RE.match(mac):
+            print("bad MAC", file=sys.stderr)
+            return 2
+        revoke(mac)
+        write_state()
+    elif cmd == "setup-mode" and len(argv) >= 3:
+        if argv[2] == "off":
+            setup_mode_off()
+        else:
+            seconds = max(60, min(int(argv[2]), 4 * 3600))
+            setup_mode_on(seconds)
+    elif cmd == "sync":
+        sync()
+        write_state()
+    elif cmd == "status":
+        write_state()
+        print(STATE_FILE.read_text())
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

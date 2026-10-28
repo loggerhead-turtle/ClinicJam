@@ -1,0 +1,7 @@
+[Unit]
+Description=ClinicJam privileged firewall helper (processes the request queue)
+After=clinicjam-firewall.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clinicjam-fw process-queue

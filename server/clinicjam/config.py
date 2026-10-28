@@ -9,17 +9,29 @@ JSON state file so they survive restarts without editing the TOML.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import secrets
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATHS = [
     os.environ.get("CLINICJAM_CONFIG", ""),
     "/etc/clinicjam/config.toml",
     str(Path(__file__).resolve().parents[2] / "config.example.toml"),
 ]
+
+# Spotify's own desktop client id. librespot uses it for its OAuth login
+# (with PKCE, so no secret is involved). Using the same token for the Web
+# API means nobody has to create a developer app to get started.
+DEFAULT_PLAYER_CLIENT_ID = "65b708073fc0480ea92a077233ca87bd"
+PLAYER_REDIRECT_URI = "http://127.0.0.1:8898/login"
+
+WEAK_PINS = {"", "0000", "1111", "1234", "2468", "1357", "123456", "000000", "111111"}
 
 
 @dataclass
@@ -34,9 +46,15 @@ class Config:
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = "http://127.0.0.1:8888/callback"
     spotify_device_name: str = "ClinicJam"
+    player_client_id: str = DEFAULT_PLAYER_CLIENT_ID
     stream_bitrate: str = "320k"
     fifo_path: str = "/run/clinicjam/audio.fifo"
+    run_dir: str = "/run/clinicjam"
     state_file: str = "/var/lib/clinicjam/state.json"
+    librespot_token_file: str = "/var/lib/clinicjam/librespot-token"
+    librespot_cache_dir: str = "/var/lib/clinicjam/librespot-cache"
+    max_stream_clients: int = 6
+    auto_allow_cast_devices: bool = True
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -52,6 +70,7 @@ class Config:
         def get(section: str, key: str, default: Any) -> Any:
             return raw.get(section, {}).get(key, default)
 
+        fifo = get("audio", "fifo_path", "/run/clinicjam/audio.fifo")
         return cls(
             ap_interface=get("network", "ap_interface", "wlan0"),
             ap_ip=get("network", "ap_ip", "10.24.7.1"),
@@ -65,11 +84,37 @@ class Config:
                 "spotify", "redirect_uri", "http://127.0.0.1:8888/callback"
             ),
             spotify_device_name=get("spotify", "device_name", "ClinicJam"),
+            player_client_id=get("spotify", "player_client_id", DEFAULT_PLAYER_CLIENT_ID),
             stream_bitrate=get("audio", "stream_bitrate", "320k"),
-            fifo_path=get("audio", "fifo_path", "/run/clinicjam/audio.fifo"),
+            fifo_path=fifo,
+            run_dir=get("paths", "run_dir", str(Path(fifo).parent)),
             state_file=get("paths", "state_file", "/var/lib/clinicjam/state.json"),
+            librespot_token_file=get(
+                "paths", "librespot_token_file", "/var/lib/clinicjam/librespot-token"
+            ),
+            librespot_cache_dir=get(
+                "paths", "librespot_cache_dir", "/var/lib/clinicjam/librespot-cache"
+            ),
+            max_stream_clients=int(get("audio", "max_stream_clients", 6)),
+            auto_allow_cast_devices=bool(get("server", "auto_allow_cast_devices", True)),
             raw=raw,
         )
+
+    @property
+    def uses_dev_app(self) -> bool:
+        """True when a Spotify developer app is configured for the Web API."""
+        return bool(self.spotify_client_id and self.spotify_client_secret)
+
+    def warnings(self) -> list[str]:
+        out = []
+        if self.admin_pin in WEAK_PINS or len(self.admin_pin) < 6:
+            out.append(
+                "admin_pin is weak — use at least 6 digits (edit "
+                "/etc/clinicjam/config.toml or the settings file on the SD card)"
+            )
+        if self.guest_pin and self.guest_pin == self.admin_pin:
+            out.append("guest_pin equals admin_pin — guests have full control")
+        return out
 
 
 DEFAULT_SETTINGS = {
@@ -89,36 +134,81 @@ DEFAULT_SETTINGS = {
 
 
 class StateStore:
-    """Tiny JSON persistence for tokens, settings, and bans."""
+    """Tiny JSON persistence for tokens, settings, and bans.
+
+    Written atomically with fsync so a power cut mid-write can never leave
+    a truncated file (which would silently drop the Spotify link).
+    The file is created 0600: it holds OAuth refresh tokens.
+    """
 
     def __init__(self, path: str):
         self.path = Path(path)
         self.data: dict[str, Any] = {
             "spotify_refresh_token": "",
+            "spotify_token_kind": "",      # "dev_app" or "pkce"
+            "session_secret": "",
             "settings": dict(DEFAULT_SETTINGS),
             "banned_devices": [],
+            "banned_macs": [],
         }
         self._load()
+        if not self.data.get("session_secret"):
+            self.data["session_secret"] = secrets.token_hex(32)
+            self.save()
 
     def _load(self) -> None:
-        try:
-            on_disk = json.loads(self.path.read_text())
-        except (FileNotFoundError, json.JSONDecodeError):
+        for candidate in (self.path, self.path.with_suffix(".bak")):
+            try:
+                on_disk = json.loads(candidate.read_text())
+                break
+            except FileNotFoundError:
+                continue
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning("state file %s unreadable (%s); trying backup", candidate, e)
+                continue
+        else:
+            return
+        if not isinstance(on_disk, dict):
             return
         self.data.update(on_disk)
         merged = dict(DEFAULT_SETTINGS)
-        merged.update(self.data.get("settings", {}))
+        merged.update(self.data.get("settings") or {})
         self.data["settings"] = merged
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, indent=2))
-        tmp.replace(self.path)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        if self.path.exists():
+            try:
+                os.replace(self.path, self.path.with_suffix(".bak"))
+            except OSError:
+                pass
+        os.replace(tmp, self.path)
+        try:
+            dfd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
 
     @property
     def settings(self) -> dict[str, Any]:
         return self.data["settings"]
+
+    @property
+    def session_secret(self) -> bytes:
+        return bytes.fromhex(self.data["session_secret"])
 
     def update_settings(self, patch: dict[str, Any]) -> None:
         for key, value in patch.items():

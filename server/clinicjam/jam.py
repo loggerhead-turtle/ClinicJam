@@ -2,6 +2,9 @@
 
 Pure in-memory logic with no I/O so it is easy to test. The player loop
 consumes items via pop_next(); the web layer mutates and renders it.
+
+Every collection here is bounded: a guest sending random device ids all
+day cannot grow the server's memory.
 """
 
 from __future__ import annotations
@@ -13,6 +16,9 @@ from typing import Any
 from .models import QueueItem, Track
 
 ACTIVE_WINDOW_SECONDS = 10 * 60
+DEVICE_FORGET_SECONDS = 24 * 3600
+MAX_DEVICES = 500
+MAX_QUEUE = 200
 
 
 class JamError(Exception):
@@ -28,25 +34,54 @@ class Jam:
         self.now_playing: QueueItem | None = None
         self.playing_since: float = 0.0
         self.paused: bool = False
+        self.paused_at: float = 0.0
         self.skip_votes: set[str] = set()
-        self.devices: dict[str, dict[str, Any]] = {}  # device_id -> {name, last_seen}
+        self.devices: dict[str, dict[str, Any]] = {}  # device_id -> {name, last_seen, ip}
         self.banned: set[str] = set()
         self.active: bool = False  # admin started the jam
         self.history: list[Track] = []
 
     # ---------------- devices ----------------
 
-    def touch_device(self, device_id: str, name: str = "") -> None:
+    def touch_device(
+        self, device_id: str, name: str = "", ip: str = "", counted: bool = True
+    ) -> None:
+        """Record activity. Only `counted` devices (ones that have joined with
+        the PIN) count towards the listener total and skip threshold, so a
+        stranger can't inflate or deflate the vote maths from outside."""
         if not device_id:
             return
-        entry = self.devices.setdefault(device_id, {"name": "", "last_seen": 0.0})
+        entry = self.devices.get(device_id)
+        if entry is None:
+            if len(self.devices) >= MAX_DEVICES:
+                self.prune_devices(force=True)
+            entry = self.devices[device_id] = {
+                "name": "", "last_seen": 0.0, "ip": "", "counted": False
+            }
         entry["last_seen"] = time.time()
         if name:
             entry["name"] = name[:24]
+        if ip:
+            entry["ip"] = ip
+        if counted:
+            entry["counted"] = True
+
+    def prune_devices(self, force: bool = False) -> None:
+        """Forget devices not seen for a day; under pressure, the oldest."""
+        cutoff = time.time() - DEVICE_FORGET_SECONDS
+        for did in [d for d, e in self.devices.items() if e["last_seen"] < cutoff]:
+            del self.devices[did]
+        if force and len(self.devices) >= MAX_DEVICES:
+            oldest = sorted(self.devices, key=lambda d: self.devices[d]["last_seen"])
+            for did in oldest[: len(self.devices) - MAX_DEVICES + 50]:
+                del self.devices[did]
 
     def active_device_count(self) -> int:
         cutoff = time.time() - ACTIVE_WINDOW_SECONDS
-        return sum(1 for d in self.devices.values() if d["last_seen"] >= cutoff)
+        return sum(
+            1 for d in self.devices.values()
+            if d["last_seen"] >= cutoff and d.get("counted", True)
+        )
 
     def _check_allowed(self, device_id: str) -> None:
         if device_id in self.banned:
@@ -58,6 +93,8 @@ class Jam:
         self._check_allowed(device_id)
         if self.settings.get("explicit_filter") and track.explicit:
             raise JamError("Explicit tracks are turned off for this jam.")
+        if len(self.queue) >= MAX_QUEUE:
+            raise JamError("The queue is full — vote on what's already there!")
         if any(item.track.uri == track.uri for item in self.queue):
             raise JamError("That song is already in the queue.")
         if self.now_playing and self.now_playing.track.uri == track.uri:
@@ -77,6 +114,9 @@ class Jam:
         before = len(self.queue)
         self.queue = [i for i in self.queue if i.id != item_id]
         return len(self.queue) != before
+
+    def remove_from_device(self, device_id: str) -> None:
+        self.queue = [i for i in self.queue if i.device_id != device_id]
 
     def ordered_queue(self) -> list[QueueItem]:
         if self.settings.get("queue_mode") == "fifo":
@@ -105,7 +145,23 @@ class Jam:
             self.history.append(self.now_playing.track)
             self.history = self.history[-50:]
         self.now_playing = None
+        self.paused = False
         self.skip_votes.clear()
+
+    def set_paused(self, paused: bool) -> None:
+        if paused and not self.paused:
+            self.paused_at = time.time()
+        elif not paused and self.paused:
+            # Shift the start time so progress resumes where it stopped.
+            self.playing_since += time.time() - self.paused_at
+        self.paused = paused
+
+    def progress_ms(self) -> int:
+        if not self.now_playing:
+            return 0
+        reference = self.paused_at if self.paused else time.time()
+        progress = int((reference - self.playing_since) * 1000)
+        return max(0, min(progress, self.now_playing.track.duration_ms))
 
     # ---------------- votes ----------------
 
@@ -136,15 +192,11 @@ class Jam:
 
     def public_state(self, viewer_device: str = "") -> dict[str, Any]:
         now = self.now_playing
-        progress = 0
-        if now:
-            progress = int((time.time() - self.playing_since) * 1000)
-            progress = min(progress, now.track.duration_ms)
         return {
             "active": self.active,
             "paused": self.paused,
             "now_playing": now.public(viewer_device) if now else None,
-            "progress_ms": progress if now else 0,
+            "progress_ms": self.progress_ms(),
             "queue": [i.public(viewer_device) for i in self.ordered_queue()],
             "queue_mode": self.settings.get("queue_mode", "vote"),
             "explicit_filter": bool(self.settings.get("explicit_filter", True)),

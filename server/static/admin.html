@@ -10,8 +10,9 @@
 <header>
   <div class="brand">🎛️ <b>ClinicJam</b> host</div>
   <div>
-    <a href="/kiosk" style="color:var(--muted);font-size:.85rem;text-decoration:none;margin-right:14px">← kiosk</a>
-    <a href="/" style="color:var(--muted);font-size:.85rem;text-decoration:none">guest view →</a>
+    <a href="/kiosk" class="hdr-link">← kiosk</a>
+    <a href="/" class="hdr-link">guest view →</a>
+    <button id="logout-btn" class="ghost hidden">Log out</button>
   </div>
 </header>
 
@@ -19,18 +20,24 @@
   <section id="login" class="card">
     <h2>Host login</h2>
     <div class="row" style="margin-top:10px">
-      <input id="pin" type="password" inputmode="numeric" placeholder="PIN" class="grow">
+      <input id="pin" type="password" inputmode="numeric" placeholder="Admin PIN" class="grow" autocomplete="current-password">
       <button id="login-btn" class="primary">Unlock</button>
     </div>
   </section>
 
   <div id="panel" class="hidden admin-grid">
 
+    <section class="card admin-grid hidden" id="warnings">
+      <h2>⚠️ Heads-up</h2>
+      <ul id="warn-list" class="muted"></ul>
+    </section>
+
     <section class="card admin-grid">
       <h2>Status</h2>
       <div class="status-line">Spotify account: <b id="st-spotify"></b></div>
-      <div class="status-line">Spotify Connect device: <b id="st-librespot"></b></div>
+      <div class="status-line">Spotify player: <b id="st-player"></b></div>
       <div class="status-line">Speakers: <b id="st-cast"></b></div>
+      <div class="status-line">Encoder: <b id="st-encoder"></b></div>
       <div class="status-line hidden" id="st-error-row">Player: <b class="bad" id="st-error"></b></div>
       <div class="row">
         <button id="jam-toggle" class="primary">Start the jam</button>
@@ -42,21 +49,45 @@
 
     <section class="card admin-grid" id="spotify-connect">
       <h2>Connect Spotify</h2>
-      <p class="muted">1. Tap the button and log in with the office Spotify Premium account.
-      2. Your browser will land on a broken 127.0.0.1 page — that's expected.
-      3. Copy that page's full address and paste it below.</p>
+      <p class="muted" id="spotify-help">
+        1. Tap the button and log in with the office Spotify <b>Premium</b> account
+        (your phone needs internet for the login page — use mobile data, or turn on
+        <i>setup mode</i> below first).
+        2. After you approve, the browser lands on a page that can't load
+        (<code>127.0.0.1…</code>) — that's expected.
+        3. Copy that page's full address and paste it here.
+      </p>
       <div class="row">
         <button id="spotify-auth">Open Spotify login</button>
       </div>
       <div class="row">
-        <input id="spotify-paste" type="text" class="grow" placeholder="Paste the http://127.0.0.1:8888/callback?code=... URL">
+        <input id="spotify-paste" type="text" class="grow" placeholder="Paste the http://127.0.0.1:…/…?code=… address here">
         <button id="spotify-finish" class="primary">Finish</button>
+      </div>
+    </section>
+
+    <section class="card admin-grid hidden" id="player-link">
+      <h2>Link the player</h2>
+      <p class="muted">You configured a Spotify developer app for the API, so the
+      player (librespot) needs its own one-time login. Same copy-paste dance.</p>
+      <div class="row"><button id="player-auth">Open player login</button></div>
+      <div class="row">
+        <input id="player-paste" type="text" class="grow" placeholder="Paste the http://127.0.0.1:8898/login?code=… address here">
+        <button id="player-finish" class="primary">Finish</button>
+      </div>
+    </section>
+
+    <section class="card admin-grid hidden" id="spotify-manage">
+      <h2>Spotify</h2>
+      <div class="row">
+        <button id="player-restart">Restart player</button>
+        <button id="spotify-disconnect" class="danger">Disconnect account</button>
       </div>
     </section>
 
     <section class="card admin-grid">
       <h2>Speakers</h2>
-      <p class="muted">Pick the speaker group with all five Nests (create it once in the
+      <p class="muted">Pick the speaker group with all the Nests (create it once in the
       Google Home app) — or a single speaker for testing.</p>
       <div class="row">
         <select id="cast-select" class="grow"></select>
@@ -66,6 +97,24 @@
         <span class="muted">Volume</span>
         <input id="volume" type="range" min="0" max="100" value="35">
         <span class="muted" id="volume-val">35%</span>
+      </div>
+      <h2 style="margin-top:8px">Speaker setup mode</h2>
+      <p class="muted">While setup mode is on, <b>every</b> device on the jam Wi-Fi gets
+      internet and phones can talk to the speakers — that's what the Google Home app
+      needs to set up a speaker or create a group. It turns itself off automatically.</p>
+      <div class="row">
+        <button id="setup-mode-on" class="primary">Turn on setup mode (30 min)</button>
+        <button id="setup-mode-off" class="hidden danger">Turn off now</button>
+        <span class="muted" id="setup-mode-status"></span>
+      </div>
+      <h2 style="margin-top:8px">Internet allowlist</h2>
+      <p class="muted">Speakers found on the jam Wi-Fi are allowed a trickle of internet
+      automatically (Google check-in). Anything else listed here was added by hand.</p>
+      <ul id="allow-list" class="tracklist"></ul>
+      <div class="row">
+        <input id="allow-mac" type="text" class="grow" placeholder="aa:bb:cc:dd:ee:ff" autocapitalize="off">
+        <input id="allow-name" type="text" placeholder="name" style="width:110px">
+        <button id="allow-add">Allow</button>
       </div>
     </section>
 

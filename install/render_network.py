@@ -4,9 +4,30 @@
 One source of truth: edit config.toml (SSID, IPs, Nest MAC allowlist...),
 run `sudo clinicjam-apply`, and hostapd/dnsmasq/nftables all pick up the
 change. The installer calls this once at install time too.
+
+Network layout (default, client_isolation = true):
+
+    wlan0 (radio, hostapd AP, ap_isolate=1)  --->  br0 (10.24.7.1, 10.24.7.2)
+                                                      |
+                     nftables "bridge" family decides which stations may
+                     talk to each other: speakers <-> speakers only, or
+                     everyone while "setup mode" is on. Guests can never
+                     reach the speakers (the Cast protocol has no auth).
+
+    nftables "inet" family: an input chain (what guests may reach ON the
+    Pi: DHCP, DNS, the web app — nothing else, no SSH), a forward chain
+    with policy drop (only allowlisted speaker MACs go out, to public
+    addresses, on a few ports), and NAT for them.
+
+    dnsmasq #1 on 10.24.7.1: DHCP + a DNS *sinkhole* (every name resolves
+    to the Pi, nothing is forwarded upstream -> no DNS tunnelling).
+    dnsmasq #2 on 10.24.7.2: a real resolver, reachable only by speakers
+    (their DNS is DNATed to it) or by everyone during setup mode.
 """
 
 import ipaddress
+import json
+import os
 import re
 import sys
 import tomllib
@@ -15,53 +36,105 @@ from pathlib import Path
 CONFIG = Path("/etc/clinicjam/config.toml")
 OUT_DIR = Path("/etc/clinicjam")
 BIN_DIR = Path("/opt/clinicjam/bin")
+ALLOWLIST_FILE = Path("/etc/clinicjam/allowlist.json")
 
 MAC_RE = re.compile(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$")
+PRINTABLE_RE = re.compile(r"^[\x20-\x7e]+$")
 
 
-def main() -> int:
-    if len(sys.argv) > 1:
-        config_path = Path(sys.argv[1])
-    else:
-        config_path = CONFIG
-    with open(config_path, "rb") as f:
-        cfg = tomllib.load(f)
+def fail(msg: str) -> "NoReturn":  # noqa: F821
+    print(f"xx {msg}", file=sys.stderr)
+    sys.exit(2)
 
+
+def load_allowlist(path: Path = ALLOWLIST_FILE) -> dict[str, dict]:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def render(cfg: dict, extra_macs: dict[str, dict] | None = None) -> dict[str, str]:
+    """Return {filename: contents} for every generated file."""
     net = cfg.get("network", {})
-    ap_if = net.get("ap_interface", "wlan0")
-    ap_ip = net.get("ap_ip", "10.24.7.1")
-    ssid = net.get("ssid", "ClinicJam")
-    country = net.get("country", "US")
-    channel = int(net.get("channel", 6))
-    passphrase = net.get("wpa2_passphrase", "")
-    dhcp_start = net.get("dhcp_range_start", "10.24.7.50")
-    dhcp_end = net.get("dhcp_range_end", "10.24.7.250")
+    ap_if = str(net.get("ap_interface", "wlan0"))
+    ap_ip = str(net.get("ap_ip", "10.24.7.1"))
+    ssid = str(net.get("ssid", "ClinicJam"))
+    country = str(net.get("country", "US")).upper()
+    band = str(net.get("band", "2.4"))
+    channel = int(net.get("channel", 6 if band == "2.4" else 36))
+    passphrase = str(net.get("wpa2_passphrase", ""))
+    dhcp_start = str(net.get("dhcp_range_start", "10.24.7.50"))
+    dhcp_end = str(net.get("dhcp_range_end", "10.24.7.250"))
+    isolation = bool(net.get("client_isolation", True))
+    ssh_on_jam = bool(net.get("ssh_from_jam_wifi", False))
     port = int(cfg.get("server", {}).get("port", 8080))
 
+    # ---- validation (these end up inside config files; keep them boring)
+    if not re.match(r"^[a-z0-9_.-]{1,15}$", ap_if):
+        fail(f"network.ap_interface {ap_if!r} is not a valid interface name")
+    if not (1 <= len(ssid.encode()) <= 32) or not PRINTABLE_RE.match(ssid):
+        fail("network.ssid must be 1-32 printable characters")
+    if passphrase and (not (8 <= len(passphrase) <= 63) or not PRINTABLE_RE.match(passphrase)):
+        fail("network.wpa2_passphrase must be 8-63 printable ASCII characters (or empty)")
+    if not re.match(r"^[A-Z]{2}$", country):
+        fail("network.country must be a two-letter code, e.g. US")
+    if band not in ("2.4", "5"):
+        fail("network.band must be \"2.4\" or \"5\"")
+    if not (1 <= port <= 65535):
+        fail("server.port out of range")
+    try:
+        ap_addr = ipaddress.ip_address(ap_ip)
+        ipaddress.ip_address(dhcp_start)
+        ipaddress.ip_address(dhcp_end)
+    except ValueError as e:
+        fail(f"bad IP in [network]: {e}")
     subnet = ipaddress.ip_network(f"{ap_ip}/24", strict=False)
+    dns_ip = str(ap_addr + 1)   # the speakers' resolver lives one address up
+    jam_if = "br0" if isolation else ap_if
 
-    macs = []
-    for mac in cfg.get("internet_allowlist", {}).get("macs", []):
-        mac = mac.strip().lower().replace("-", ":")
-        if not MAC_RE.match(mac):
+    macs: dict[str, str] = {}
+    for mac in cfg.get("internet_allowlist", {}).get("macs", []) or []:
+        m = str(mac).strip().lower().replace("-", ":")
+        if not MAC_RE.match(m):
             print(f"!! ignoring invalid MAC in internet_allowlist: {mac!r}")
             continue
-        macs.append(mac)
+        macs[m] = "config.toml"
+    for mac, info in (extra_macs or {}).items():
+        m = str(mac).strip().lower().replace("-", ":")
+        if MAC_RE.match(m):
+            macs[m] = str((info or {}).get("name", "allowlist"))
 
     # ---------------- hostapd ----------------
+    if band == "5":
+        radio = f"""hw_mode=a
+channel={channel}
+ieee80211n=1
+ieee80211ac=1
+ht_capab=[HT40+][SHORT-GI-20][SHORT-GI-40]
+"""
+    else:
+        radio = f"""hw_mode=g
+channel={channel}
+ieee80211n=1
+ht_capab=[SHORT-GI-20]
+"""
     hostapd = f"""# Generated by clinicjam-apply — edit config.toml instead.
 interface={ap_if}
+{"bridge=br0" if isolation else "# bridge: off (client_isolation = false)"}
 driver=nl80211
 ssid={ssid}
 country_code={country}
-hw_mode=g
-channel={channel}
-ieee80211n=1
-wmm_enabled=1
+ieee80211d=1
+{radio}wmm_enabled=1
 auth_algs=1
-# Client isolation stays off so a host phone can reach the Nest speakers
-# during Google Home setup. The firewall is what guests can't get past.
-ap_isolate=0
+ignore_broadcast_ssid=0
+# Stations may not talk to each other at the radio level. With
+# client_isolation the Linux bridge (hairpin) + nftables decide instead:
+# speakers may reach speakers, guests may reach nothing but the Pi.
+ap_isolate={1 if isolation else 0}
+max_num_sta=64
 """
     if passphrase:
         hostapd += f"""wpa=2
@@ -70,35 +143,55 @@ wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 """
 
-    # ---------------- dnsmasq ----------------
+    # ---------------- dnsmasq (guests: DHCP + sinkhole DNS) ----------------
     dnsmasq = f"""# Generated by clinicjam-apply — edit config.toml instead.
-interface={ap_if}
+# Guest-facing DHCP + DNS. Every name resolves to the Pi and NOTHING is
+# forwarded upstream: the captive portal catches HTTP, and there is no
+# DNS channel out of the walled garden.
+interface={jam_if}
 bind-interfaces
 listen-address={ap_ip}
 except-interface=lo
-domain-needed
-bogus-priv
+no-resolv
+no-hosts
+no-poll
+address=/#/{ap_ip}
 dhcp-range={dhcp_start},{dhcp_end},255.255.255.0,12h
 dhcp-option=option:router,{ap_ip}
 dhcp-option=option:dns-server,{ap_ip}
 # RFC 8910 captive-portal API — helps modern phones open the jam page.
 dhcp-option=114,http://{ap_ip}/captive-portal-api
 dhcp-authoritative
-address=/clinicjam.lan/{ap_ip}
+dhcp-leasefile=/var/lib/clinicjam/dnsmasq.leases
 local-ttl=10
-cache-size=1000
+cache-size=150
+"""
+
+    # ---------------- dnsmasq (speakers: a real resolver) ----------------
+    dnsmasq_nest = f"""# Generated by clinicjam-apply — edit config.toml instead.
+# Real recursive DNS for the speakers only. Speakers' DNS queries are
+# DNATed here by the firewall (keyed on their MAC); guests cannot reach it.
+listen-address={dns_ip}
+bind-interfaces
+except-interface=lo
+no-dhcp-interface={jam_if}
+no-hosts
+bogus-priv
+domain-needed
+cache-size=300
 """
 
     # ---------------- nftables ----------------
-    nest_set = ""
-    if macs:
-        elements = ", ".join(macs)
-        nest_set = f"        elements = {{ {elements} }}\n"
+    elements = ", ".join(sorted(macs))
+    nest_set = f"        elements = {{ {elements} }}\n" if macs else ""
+    ssh_rule = "        tcp dport 22 accept\n" if ssh_on_jam else "        # SSH from the jam Wi-Fi is off (network.ssh_from_jam_wifi)\n"
     nftables = f"""# Generated by clinicjam-apply — edit config.toml instead.
-# Walled garden: guest devices on the jam Wi-Fi can reach ONLY the Pi.
-# Only the MACs in internet_allowlist (the Nest speakers) are NATed out
-# through the uplink (cellular modem / ethernet). The office network is
-# never shared with guests.
+#
+# Walled garden. Guests on the jam Wi-Fi can reach ONLY the Pi's jam
+# services. Allowlisted speaker MACs get a trickle of internet (public
+# addresses, a few ports) through the uplink. Nothing is ever routed into
+# a private network on the uplink side. "Setup mode" (clinicjam-fw)
+# inserts temporary accept rules tagged with comment "setup-mode".
 
 table inet clinicjam
 delete table inet clinicjam
@@ -106,16 +199,54 @@ table inet clinicjam {{
     set nest_macs {{
         type ether_addr
 {nest_set}    }}
+    set private_nets {{
+        type ipv4_addr
+        flags interval
+        elements = {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+                     169.254.0.0/16, 100.64.0.0/10, 127.0.0.0/8 }}
+    }}
+    set nest_tcp {{
+        type inet_service
+        elements = {{ 80, 443, 5228, 5229, 5230 }}
+    }}
+    set nest_udp {{
+        type inet_service
+        elements = {{ 123, 443 }}
+    }}
+
+    chain input {{
+        type filter hook input priority filter; policy accept;
+        iifname "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+        iifname "{jam_if}" jump jam_input
+        # The jam app and the audio stream are for the jam Wi-Fi only —
+        # never reachable from the uplink (office network / modem) side.
+        tcp dport {{ 80, {port} }} drop
+    }}
+
+    chain jam_input {{
+        meta l4proto {{ icmp, ipv6-icmp }} accept
+        udp dport {{ 67, 68 }} accept
+        udp dport 53 accept
+        tcp dport 53 accept
+        tcp dport {{ 80, {port} }} accept
+        udp dport 5353 accept
+{ssh_rule}        meta l4proto tcp reject with tcp reset
+        reject
+    }}
 
     chain forward {{
-        type filter hook forward priority filter; policy accept;
-        # Nest speakers may reach the internet (Google check-in/NTP).
-        iifname "{ap_if}" ether saddr @nest_macs ct state new,established,related accept
-        # Return traffic for allowlisted connections.
-        oifname "{ap_if}" ct state established,related accept
-        # Everyone else on the jam network: no forwarding, full stop.
-        iifname "{ap_if}" drop
-        oifname "{ap_if}" drop
+        type filter hook forward priority filter; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        # Speakers: public internet only, Google's ports only.
+        iifname "{jam_if}" ether saddr @nest_macs ip daddr != @private_nets tcp dport @nest_tcp ct state new accept
+        iifname "{jam_if}" ether saddr @nest_macs ip daddr != @private_nets udp dport @nest_udp accept
+        # Everyone else on the jam network: nothing, and fail fast.
+        iifname "{jam_if}" meta l4proto tcp reject with tcp reset
+        iifname "{jam_if}" reject
+        # Anything else (e.g. routing between two uplinks) hits policy drop.
     }}
 }}
 
@@ -128,18 +259,38 @@ table ip clinicjam_nat {{
 
     chain prerouting {{
         type nat hook prerouting priority dstnat;
-        # Speakers' own HTTP must not be captured by the portal.
-        iifname "{ap_if}" ether saddr @nest_macs accept
+        # Speakers' DNS goes to the real resolver; their HTTP is left alone.
+        iifname "{jam_if}" ether saddr @nest_macs udp dport 53 dnat to {dns_ip}
+        iifname "{jam_if}" ether saddr @nest_macs tcp dport 53 dnat to {dns_ip}
+        iifname "{jam_if}" ether saddr @nest_macs accept
         # Captive portal: any guest HTTP request lands on the jam app.
-        iifname "{ap_if}" ip daddr != {ap_ip} tcp dport 80 dnat to {ap_ip}:{port}
-        iifname "{ap_if}" ip daddr {ap_ip} tcp dport 80 redirect to :{port}
+        iifname "{jam_if}" ip daddr != {ap_ip} tcp dport 80 dnat to {ap_ip}:{port}
+        iifname "{jam_if}" ip daddr {ap_ip} tcp dport 80 redirect to :{port}
     }}
 
     chain postrouting {{
         type nat hook postrouting priority srcnat;
         # NAT jam-subnet traffic that made it past the forward filter
         # (i.e. only the allowlisted speakers) out the uplink.
-        ip saddr {subnet} oifname != "{ap_if}" masquerade
+        ip saddr {subnet} oifname != "{jam_if}" masquerade
+    }}
+}}
+"""
+    if isolation:
+        nftables += f"""
+# Station-to-station traffic (hairpinned through br0 because hostapd's
+# ap_isolate is on). Speakers may talk to each other — a Cast speaker
+# group streams audio between its members — and to nobody else.
+table bridge clinicjam
+delete table bridge clinicjam
+table bridge clinicjam {{
+    set nest_macs {{
+        type ether_addr
+{nest_set}    }}
+
+    chain forward {{
+        type filter hook forward priority 0; policy drop;
+        ether saddr @nest_macs accept
     }}
 }}
 """
@@ -147,27 +298,60 @@ table ip clinicjam_nat {{
     # ---------------- librespot event hook ----------------
     onevent = f"""#!/bin/sh
 # librespot --onevent hook: forward player events to the jam server.
+# Authenticated with a per-boot token the web service writes at startup.
 [ -n "$PLAYER_EVENT" ] || exit 0
+TOKEN=$(cat /run/clinicjam/hook.token 2>/dev/null) || exit 0
 curl -s -m 2 -X POST -H 'Content-Type: application/json' \\
+  -H "Authorization: Bearer $TOKEN" \\
   -d "{{\\"event\\":\\"$PLAYER_EVENT\\"}}" \\
   "http://127.0.0.1:{port}/api/internal/librespot-event" >/dev/null 2>&1 || true
 """
 
+    # ---------------- interface env for the shell helpers ----------------
+    env = f"""# Generated by clinicjam-apply — edit config.toml instead.
+AP_IF={ap_if}
+JAM_IF={jam_if}
+AP_IP={ap_ip}
+DNS_IP={dns_ip}
+CLIENT_ISOLATION={"1" if isolation else "0"}
+"""
+
+    return {
+        "hostapd.conf": hostapd,
+        "dnsmasq.conf": dnsmasq,
+        "dnsmasq-nest.conf": dnsmasq_nest,
+        "nftables.conf": nftables,
+        "network.env": env,
+        "onevent.sh": onevent,
+        "_summary": f"SSID '{ssid}' on {ap_if} via {jam_if} ({ap_ip}, resolver {dns_ip}), "
+                    f"{len(macs)} allowlisted MAC(s), isolation {'on' if isolation else 'OFF'}",
+    }
+
+
+def write_private(path: Path, text: str, mode: int = 0o640) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(path, mode)
+
+
+def main() -> int:
+    config_path = Path(sys.argv[1]) if len(sys.argv) > 1 else CONFIG
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    files = render(cfg, load_allowlist())
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     BIN_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / "hostapd.conf").write_text(hostapd)
-    (OUT_DIR / "dnsmasq.conf").write_text(dnsmasq)
-    (OUT_DIR / "nftables.conf").write_text(nftables)
+    write_private(OUT_DIR / "hostapd.conf", files["hostapd.conf"], 0o600)
+    write_private(OUT_DIR / "dnsmasq.conf", files["dnsmasq.conf"], 0o644)
+    write_private(OUT_DIR / "dnsmasq-nest.conf", files["dnsmasq-nest.conf"], 0o644)
+    write_private(OUT_DIR / "nftables.conf", files["nftables.conf"], 0o640)
+    write_private(OUT_DIR / "network.env", files["network.env"], 0o644)
     hook = BIN_DIR / "onevent.sh"
-    hook.write_text(onevent)
-    hook.chmod(0o755)
+    write_private(hook, files["onevent.sh"], 0o755)
 
-    print(f"rendered hostapd/dnsmasq/nftables for SSID '{ssid}' on {ap_if} ({ap_ip})")
-    if macs:
-        print(f"internet allowlist: {', '.join(macs)}")
-    else:
-        print("internet allowlist is EMPTY — add your Nest speakers' MACs to")
-        print("  /etc/clinicjam/config.toml [internet_allowlist] and re-run clinicjam-apply")
+    print(f"rendered {files['_summary']}")
     return 0
 
 

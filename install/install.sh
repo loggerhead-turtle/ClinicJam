@@ -1,25 +1,25 @@
 #!/bin/bash
-# ClinicJam installer for Raspberry Pi OS Bookworm (Pi 4/5, 64-bit).
+# ClinicJam installer for Raspberry Pi OS (Trixie/Bookworm, Pi 4/5, 64-bit).
 #
-# One-line install:
-#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/claude/office-clinic-jam-app-voejwh/install/install.sh | sudo bash
+# Normally you don't run this: flash the ready-made image instead
+# (docs/QUICKSTART.md). It is here for installing onto an existing Pi OS:
 #
-# Or from a clone:
-#   sudo ./install/install.sh
+#   curl -fsSL https://raw.githubusercontent.com/loggerhead-turtle/ClinicJam/main/install/install.sh | sudo bash
+#   sudo ./install/install.sh            # from a clone
 #
-# What it does:
-#   1. Installs packages (hostapd, dnsmasq, nftables, ffmpeg, python, librespot)
-#   2. Creates the walled-garden Wi-Fi network with captive portal
-#   3. Installs the ClinicJam server + systemd services
+# It is also what the image build runs inside the chroot
+# (CLINICJAM_IMAGE_BUILD=1), so the image and a manual install are identical.
 #
 # Safe to re-run: it upgrades in place and keeps /etc/clinicjam/config.toml.
 
 set -euo pipefail
 
-REPO_URL="https://github.com/loggerhead-turtle/ClinicJam.git"
+REPO_URL="${CLINICJAM_REPO_URL:-https://github.com/loggerhead-turtle/ClinicJam.git}"
+REPO_REF="${CLINICJAM_REPO_REF:-main}"
 APP_DIR=/opt/clinicjam
 CONFIG_DIR=/etc/clinicjam
 DATA_DIR=/var/lib/clinicjam
+IMAGE_BUILD="${CLINICJAM_IMAGE_BUILD:-0}"
 
 say()  { echo -e "\e[1;32m==>\e[0m $*"; }
 warn() { echo -e "\e[1;33m!!\e[0m $*"; }
@@ -32,76 +32,79 @@ command -v apt-get >/dev/null || die "This installer targets Raspberry Pi OS (De
 say "Installing packages (this can take a few minutes)..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq \
-    hostapd dnsmasq nftables ffmpeg curl git rfkill \
-    python3 python3-venv python3-pip > /dev/null
+apt-get install -y -qq --no-install-recommends \
+    hostapd dnsmasq nftables conntrack ffmpeg curl git rfkill iw bridge-utils \
+    python3 python3-venv python3-pip ca-certificates gpg > /dev/null
 
 # Stock hostapd/dnsmasq services would fight with our dedicated units.
-systemctl disable --now hostapd dnsmasq 2>/dev/null || true
+systemctl disable hostapd dnsmasq 2>/dev/null || true
+[ "$IMAGE_BUILD" = 1 ] || systemctl stop hostapd dnsmasq 2>/dev/null || true
 systemctl unmask hostapd 2>/dev/null || true
 
-# librespot: the raspotify package ships a well-built ARM binary.
+# librespot: the raspotify project publishes a signed apt repo with a
+# well-built arm64 binary. We add the repo + key ourselves (apt verifies
+# the signature) rather than piping their install script into sh.
 if ! command -v librespot >/dev/null; then
-    say "Installing librespot (via the raspotify package)..."
-    curl -fsSL https://dtcooper.github.io/raspotify/install.sh | sh
-    # We run librespot ourselves; raspotify's own service must not grab it.
-    systemctl disable --now raspotify 2>/dev/null || true
+    say "Installing librespot (raspotify apt repository)..."
+    curl -fsSL https://dtcooper.github.io/raspotify/key.asc -o /usr/share/keyrings/raspotify_key.asc
+    chmod 644 /usr/share/keyrings/raspotify_key.asc
+    echo 'deb [signed-by=/usr/share/keyrings/raspotify_key.asc] https://dtcooper.github.io/raspotify raspotify main' \
+        > /etc/apt/sources.list.d/raspotify.list
+    apt-get update -qq
+    apt-get install -y -qq --no-install-recommends raspotify > /dev/null
 fi
+# We run librespot ourselves; raspotify's own service must not grab it.
+systemctl disable raspotify 2>/dev/null || true
+[ "$IMAGE_BUILD" = 1 ] || systemctl stop raspotify 2>/dev/null || true
 command -v librespot >/dev/null || die "librespot did not install — see https://github.com/dtcooper/raspotify"
 
 # ------------------------------------------------------------------ code
-if [ ! -d "$APP_DIR/.git" ]; then
-    say "Fetching ClinicJam into $APP_DIR..."
-    # Allow installing from a local checkout (dev) or from GitHub (one-liner).
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd || true)"
-    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/../server/requirements.txt" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd || true)"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/../server/requirements.txt" ]; then
+    SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if [ "$SRC_DIR" != "$APP_DIR" ]; then
+        say "Installing ClinicJam from $SRC_DIR into $APP_DIR..."
         mkdir -p "$APP_DIR"
-        cp -a "$SCRIPT_DIR/.." -T "$APP_DIR"
-    else
-        git clone --depth 1 "$REPO_URL" "$APP_DIR"
+        # Copy the working tree (not .git, not venvs).
+        tar -C "$SRC_DIR" --exclude=.git --exclude=venv --exclude=.venv \
+            --exclude='__pycache__' --exclude=.pytest_cache -cf - . | tar -C "$APP_DIR" -xf -
     fi
+elif [ ! -d "$APP_DIR/.git" ]; then
+    say "Fetching ClinicJam ($REPO_REF) into $APP_DIR..."
+    git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$APP_DIR"
 else
-    say "Updating ClinicJam in $APP_DIR..."
-    git -C "$APP_DIR" pull --ff-only || warn "git pull failed; continuing with existing code"
+    say "Keeping existing code in $APP_DIR (run 'git -C $APP_DIR pull' to update)"
 fi
 
 # ------------------------------------------------------------------ user + dirs
 id clinicjam >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin clinicjam
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$APP_DIR/bin"
 chown -R clinicjam:clinicjam "$DATA_DIR"
+chmod 750 "$DATA_DIR"
+chown root:clinicjam "$CONFIG_DIR"
+chmod 750 "$CONFIG_DIR"
 
 # ------------------------------------------------------------------ config
 if [ ! -f "$CONFIG_DIR/config.toml" ]; then
     say "Creating $CONFIG_DIR/config.toml..."
-    cp "$APP_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
-
-    if [ -t 0 ]; then
+    install -m 640 -o root -g clinicjam "$APP_DIR/config.example.toml" "$CONFIG_DIR/config.toml"
+    if [ "$IMAGE_BUILD" != 1 ] && [ -t 0 ]; then
         read -rp "Wi-Fi network name for guests [ClinicJam]: " SSID
-        read -rp "Admin PIN for the host panel [2468]: " PIN
+        read -rp "Wi-Fi password for that network (8+ chars, empty = open): " WPA
+        read -rp "Admin PIN for the host panel (6+ digits): " PIN
         read -rp "Jam PIN guests enter to join (empty = no PIN) [1357]: " GUESTPIN
         read -rp "Two-letter Wi-Fi country code [US]: " COUNTRY
-        SSID=${SSID:-ClinicJam}; PIN=${PIN:-2468}; GUESTPIN=${GUESTPIN-1357}; COUNTRY=${COUNTRY:-US}
-        sed -i "s/^ssid = .*/ssid = \"${SSID//\//\\/}\"/" "$CONFIG_DIR/config.toml"
-        sed -i "s/^admin_pin = .*/admin_pin = \"${PIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
-        sed -i "s/^guest_pin = .*/guest_pin = \"${GUESTPIN//\//\\/}\"/" "$CONFIG_DIR/config.toml"
-        sed -i "s/^country = .*/country = \"${COUNTRY//\//\\/}\"/" "$CONFIG_DIR/config.toml"
+        python3 "$APP_DIR/install/apply_settings.py" --set \
+            "jam_wifi_name=${SSID:-ClinicJam}" "jam_wifi_password=${WPA:-}" \
+            "admin_pin=${PIN:-}" "guest_pin=${GUESTPIN-1357}" "country=${COUNTRY:-US}" \
+            || warn "could not apply the answers; edit $CONFIG_DIR/config.toml by hand"
     else
-        warn "Non-interactive install: edit $CONFIG_DIR/config.toml afterwards (SSID, admin PIN, Spotify keys)."
+        warn "No prompts: edit $CONFIG_DIR/config.toml (or clinicjam-settings.txt on the boot partition) and run 'sudo clinicjam-apply'."
     fi
 else
     say "Keeping existing $CONFIG_DIR/config.toml"
+    chown root:clinicjam "$CONFIG_DIR/config.toml"; chmod 640 "$CONFIG_DIR/config.toml"
 fi
-
-# ------------------------------------------------------------------ uplink
-# How the Pi itself reaches the internet (Spotify, speaker check-in) —
-# separate from the guest jam Wi-Fi. Defaults to a no-op (cellular/ethernet,
-# handled natively by NetworkManager). See [uplink] in config.toml for the
-# wifi_client option (joining an existing network like the company's guest
-# Wi-Fi through a second radio) and docs/NETWORK.md for captive-portal
-# auto-accept setup.
-say "Configuring the Pi's own internet uplink..."
-chmod +x "$APP_DIR/install/setup-uplink.sh"
-"$APP_DIR/install/setup-uplink.sh" || warn "uplink setup needs attention (see messages above) — fix $CONFIG_DIR/config.toml and re-run: sudo $APP_DIR/install/setup-uplink.sh"
 
 # ------------------------------------------------------------------ python env
 say "Setting up the Python environment..."
@@ -111,13 +114,20 @@ python3 -m venv "$APP_DIR/venv"
 
 # ------------------------------------------------------------------ helpers
 install -m 755 "$APP_DIR/install/setup-ap-interface.sh" "$APP_DIR/bin/setup-ap-interface.sh"
+install -m 755 "$APP_DIR/install/ap-hairpin.sh" "$APP_DIR/bin/ap-hairpin.sh"
+install -m 755 "$APP_DIR/install/run-librespot.sh" "$APP_DIR/bin/run-librespot.sh"
 install -m 755 "$APP_DIR/install/render_network.py" "$APP_DIR/bin/render_network.py"
+install -m 755 "$APP_DIR/install/apply_settings.py" "$APP_DIR/bin/apply_settings.py"
+install -m 755 "$APP_DIR/install/clinicjam-fw" /usr/local/sbin/clinicjam-fw
 cat > /usr/local/sbin/clinicjam-apply <<EOF
 #!/bin/sh
 # Re-render network configs from config.toml and reload services.
 set -e
 python3 $APP_DIR/bin/render_network.py
-systemctl restart clinicjam-firewall clinicjam-hostapd clinicjam-dnsmasq
+if [ -d /run/systemd/system ]; then
+    systemctl restart clinicjam-network clinicjam-firewall clinicjam-hostapd \\
+        clinicjam-dnsmasq clinicjam-dns-nest clinicjam-web clinicjam-librespot
+fi
 echo "clinicjam: network config applied"
 EOF
 chmod 755 /usr/local/sbin/clinicjam-apply
@@ -127,14 +137,21 @@ DEVICE_NAME=$(python3 -c "
 import tomllib
 cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
 print(cfg.get('spotify',{}).get('device_name','ClinicJam'))")
-echo "DEVICE_NAME=$DEVICE_NAME" > "$CONFIG_DIR/librespot.env"
+cat > "$CONFIG_DIR/librespot.env" <<EOF
+DEVICE_NAME=$DEVICE_NAME
+CACHE_DIR=$DATA_DIR/librespot-cache
+TOKEN_FILE=$DATA_DIR/librespot-token
+FIFO=/run/clinicjam/audio.fifo
+EOF
+chmod 644 "$CONFIG_DIR/librespot.env"
+[ -f "$CONFIG_DIR/allowlist.json" ] || { echo '{}' > "$CONFIG_DIR/allowlist.json"; chmod 644 "$CONFIG_DIR/allowlist.json"; }
 
 # ------------------------------------------------------------------ network configs
 say "Rendering hostapd/dnsmasq/nftables from config.toml..."
 python3 "$APP_DIR/bin/render_network.py" "$CONFIG_DIR/config.toml"
 
-# Keep NetworkManager's hands off the AP interface (it may manage the
-# cellular modem / ethernet uplink, which is exactly what we want).
+# Keep NetworkManager's hands off the jam interfaces (it manages the
+# uplink — cellular modem / ethernet / the Wi-Fi dongle — which is what we want).
 AP_IF=$(python3 -c "
 import tomllib
 cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
@@ -142,61 +159,56 @@ print(cfg.get('network',{}).get('ap_interface','wlan0'))")
 mkdir -p /etc/NetworkManager/conf.d
 cat > /etc/NetworkManager/conf.d/clinicjam-unmanaged.conf <<EOF
 [keyfile]
-unmanaged-devices=interface-name:$AP_IF
+unmanaged-devices=interface-name:$AP_IF;interface-name:br0
 EOF
-systemctl reload NetworkManager 2>/dev/null || true
+[ "$IMAGE_BUILD" = 1 ] || systemctl reload NetworkManager 2>/dev/null || true
 
 # Routing on (the firewall decides who may actually be forwarded).
-echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/90-clinicjam.conf
-sysctl -q --system
+cat > /etc/sysctl.d/90-clinicjam.conf <<'EOF'
+net.ipv4.ip_forward=1
+# Guests can't reach the Pi over IPv6 either way; keep it simple.
+net.ipv6.conf.all.forwarding=0
+EOF
+[ "$IMAGE_BUILD" = 1 ] || sysctl -q --system
 
 # ------------------------------------------------------------------ services
 say "Installing systemd services..."
-install -m 644 "$APP_DIR"/install/systemd/clinicjam-*.service /etc/systemd/system/
+install -m 644 "$APP_DIR"/install/systemd/clinicjam-*.service "$APP_DIR"/install/systemd/clinicjam-*.path /etc/systemd/system/
 install -m 644 "$APP_DIR/install/systemd/clinicjam-tmpfiles.conf" /etc/tmpfiles.d/clinicjam.conf
-systemd-tmpfiles --create /etc/tmpfiles.d/clinicjam.conf
-systemctl daemon-reload
-systemctl enable --now \
-    clinicjam-network clinicjam-firewall clinicjam-hostapd \
-    clinicjam-dnsmasq clinicjam-web clinicjam-librespot clinicjam-portal-watch
+install -m 644 "$APP_DIR/install/systemd/clinicjam-firstboot.service" /etc/systemd/system/clinicjam-firstboot.service
+UNITS="clinicjam-network clinicjam-firewall clinicjam-hostapd clinicjam-dnsmasq clinicjam-dns-nest \
+       clinicjam-web clinicjam-librespot clinicjam-portal-watch clinicjam-fw.path clinicjam-firstboot"
+if [ "$IMAGE_BUILD" = 1 ]; then
+    # shellcheck disable=SC2086
+    systemctl enable $UNITS >/dev/null
+else
+    systemd-tmpfiles --create /etc/tmpfiles.d/clinicjam.conf
+    systemctl daemon-reload
+    # shellcheck disable=SC2086
+    systemctl enable $UNITS >/dev/null
+    # Uplink (the Pi's own internet) per [uplink] in config.toml.
+    say "Configuring the Pi's own internet uplink..."
+    chmod +x "$APP_DIR/install/setup-uplink.sh"
+    "$APP_DIR/install/setup-uplink.sh" || warn "uplink setup needs attention (see above) — fix $CONFIG_DIR/config.toml and re-run: sudo $APP_DIR/install/setup-uplink.sh"
+    # shellcheck disable=SC2086
+    systemctl restart $UNITS
+fi
 
 AP_IP=$(python3 -c "
 import tomllib
 cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
 print(cfg.get('network',{}).get('ap_ip','10.24.7.1'))")
-UPLINK_MODE=$(python3 -c "
-import tomllib
-cfg = tomllib.load(open('$CONFIG_DIR/config.toml','rb'))
-print(cfg.get('uplink',{}).get('mode','cellular'))")
 
 say "ClinicJam is installed! 🎵"
 cat <<EOF
 
-  Next steps:
-    1. Add your Spotify API keys to $CONFIG_DIR/config.toml
-       (docs/SPOTIFY_SETUP.md), then: sudo systemctl restart clinicjam-web
-    2. Join the '$DEVICE_NAME' guest experience:
-         Wi-Fi network:  (the SSID you chose)
-         Guest app:      http://$AP_IP/
-         Host panel:     http://$AP_IP/admin
-    3. Put your 5 Nest speakers on the jam Wi-Fi and allowlist their MACs
-       (docs/NEST_SETUP.md), then: sudo clinicjam-apply
-EOF
-
-if [ "$UPLINK_MODE" = "wifi_client" ]; then
-cat <<EOF
-    4. Uplink is set to 'wifi_client' — the Pi joins another Wi-Fi network
-       (e.g. the company's guest network) through a second radio for its
-       own internet. If that network has a captive portal, set it up to
-       auto-accept (docs/NETWORK.md#automating-a-captive-portal-uplink).
-       If it's just a single "I agree" button, this usually works as-is:
-         cp $APP_DIR/docs/portal_click.example.py $CONFIG_DIR/portal_click.py
-         sudo systemctl restart clinicjam-portal-watch
-       Otherwise edit $CONFIG_DIR/portal_click.py per the docs.
-EOF
-fi
-
-cat <<EOF
+  Next steps (docs/QUICKSTART.md has pictures of each):
+    1. Join the jam Wi-Fi with your phone and open  http://$AP_IP/admin
+    2. Log in with your admin PIN and tap "Open Spotify login" — one paste
+       links both the account and the player. No developer app needed.
+    3. Tap "Turn on setup mode", put the Nest speakers on the jam Wi-Fi with
+       the Google Home app, create a speaker group, pick it under Speakers.
+    4. Press "Start the jam".
 
   Service health:  systemctl status 'clinicjam-*'
   Logs:            journalctl -u clinicjam-web -f

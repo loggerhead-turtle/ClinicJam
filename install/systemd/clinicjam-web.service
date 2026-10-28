@@ -1,6 +1,6 @@
 [Unit]
 Description=ClinicJam web server (guest app, admin panel, audio stream)
-After=network.target clinicjam-network.service
+After=network.target clinicjam-network.service clinicjam-firewall.service
 
 [Service]
 User=clinicjam
@@ -10,6 +10,28 @@ WorkingDirectory=/opt/clinicjam/server
 ExecStart=/opt/clinicjam/venv/bin/python -m clinicjam.main
 Restart=always
 RestartSec=3
+UMask=0077
+LimitNOFILE=65536
+# Shed load before the Pi starts swapping; systemd restarts us instead.
+MemoryHigh=400M
+MemoryMax=600M
+# No privileges, ever: anything root-only goes through clinicjam-fw's queue.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clinicjam /run/clinicjam
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=ClinicJam real DNS resolver for the speakers (dnsmasq)
+After=clinicjam-network.service clinicjam-firewall.service
+Requires=clinicjam-network.service
+
+[Service]
+ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/etc/clinicjam/dnsmasq-nest.conf
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/clinicjam/dnsmasq-nest.conf
+Restart=always
+RestartSec=3
+ProtectSystem=strict
+ReadWritePaths=/run
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

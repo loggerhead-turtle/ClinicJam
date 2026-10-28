@@ -1,6 +1,6 @@
 [Unit]
-Description=ClinicJam AP interface setup (static IP on the jam Wi-Fi)
-Before=clinicjam-hostapd.service clinicjam-dnsmasq.service
+Description=ClinicJam jam-network interface (static IPs, bridge)
+Before=clinicjam-firewall.service clinicjam-hostapd.service clinicjam-dnsmasq.service clinicjam-dns-nest.service
 Wants=network.target
 
 [Service]

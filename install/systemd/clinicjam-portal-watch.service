@@ -9,6 +9,16 @@ Group=clinicjam
 ExecStart=/opt/clinicjam/venv/bin/python /opt/clinicjam/install/portal_watch.py
 Restart=always
 RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+# It talks to the uplink's captive portal only — never to the Pi or the jam LAN.
+IPAddressDeny=localhost 10.24.0.0/16
+MemoryMax=200M
 
 [Install]
 WantedBy=multi-user.target

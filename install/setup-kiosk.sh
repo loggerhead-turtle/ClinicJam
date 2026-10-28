@@ -48,6 +48,7 @@ exec cage -- $BROWSER \\
     --disable-pinch \\
     --overscroll-history-navigation=0 \\
     --ozone-platform=wayland \\
+    --incognito \\
     --user-data-dir=/home/kiosk/.clinicjam-kiosk \\
     "http://127.0.0.1:$PORT/kiosk"
 EOF

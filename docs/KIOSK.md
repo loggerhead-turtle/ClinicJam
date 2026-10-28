@@ -30,13 +30,14 @@ No desktop environment is installed — this works on Raspberry Pi OS
   on the on-screen PIN pad reveals pause / resume / skip / stop-jam
   buttons plus a **Full admin panel** button that opens `/admin` right on
   the touchscreen (settings, speakers, moderation, bans). Tap the gear
-  again to hide the controls when you walk away.
+  again to lock: that drops the host session on the Pi, not just the
+  buttons. Host sessions on the kiosk expire after 15 minutes anyway.
 
 If a **jam PIN** is configured (`guest_pin` in config.toml), the kiosk
 boots locked: a PIN pad covers the screen until someone enters the shared
-jam PIN (or the admin PIN). Once unlocked it stays unlocked — it's a
-shared screen in a trusted space; re-lock it any time by restarting the
-kiosk service. Guests at the kiosk can search, queue, and vote, but
+jam PIN (or the admin PIN). Once unlocked it stays unlocked until the
+kiosk restarts — the browser runs in incognito mode, so nothing persists
+across a restart (`sudo systemctl restart clinicjam-kiosk` re-locks it). Guests at the kiosk can search, queue, and vote, but
 settings always require the admin PIN.
 
 The kiosk counts as **one voter** — it shares a single device identity,
