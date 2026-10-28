@@ -198,6 +198,13 @@ def set_country(country: str) -> None:
 
 
 def set_login_password(password: str) -> None:
+    """A login password turns SSH on; no password keeps it off."""
+    systemd = Path("/run/systemd/system").is_dir()
+    if not password:
+        if systemd:
+            run(["systemctl", "disable", "--now", "ssh"])
+        log("no login_password: SSH stays off")
+        return
     try:
         import pwd
         user = next(p.pw_name for p in pwd.getpwall() if p.pw_uid == 1000)
@@ -205,7 +212,9 @@ def set_login_password(password: str) -> None:
         log("no uid-1000 user yet; login password not changed")
         return
     subprocess.run(["chpasswd"], input=f"{user}:{password}\n", text=True, check=False)
-    log(f"login password set for user '{user}'")
+    if systemd:
+        run(["systemctl", "enable", "--now", "ssh"])
+    log(f"login password set for user '{user}'; SSH enabled")
 
 
 def configure_uplink() -> None:
@@ -254,7 +263,7 @@ def apply_file(boot_dir: Path, path: Path) -> int:
     changed = apply_to_config(settings)
     if settings.get("country"):
         set_country(settings["country"])
-    if settings.get("login_password"):
+    if "login_password" in settings:
         set_login_password(settings["login_password"])
     if Path("/run/systemd/system").is_dir():
         configure_uplink()
@@ -272,6 +281,7 @@ def apply_file(boot_dir: Path, path: Path) -> int:
         f"  Guest app:     http://{ap_ip}/",
         f"  Host panel:    http://{ap_ip}/admin",
         f"  Office Wi-Fi:  {settings.get('office_wifi_name') or '(not set — using Ethernet/modem)'}",
+        f"  SSH:           {'on (user admin)' if settings.get('login_password') else 'off (set login_password to turn it on)'}",
         "",
         "You can edit the settings file again at any time; it is re-applied on the next boot.",
     ])
